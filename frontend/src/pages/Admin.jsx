@@ -143,7 +143,7 @@ export default function Admin() {
                             <span className="px-3 py-1 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 capitalize text-xs font-semibold shadow-[0_0_10px_rgba(34,211,238,0.1)]">{b.service}</span>
                           </td>
                           <td className="py-4 px-2 text-slate-300 font-medium tracking-wide">
-                            {b.slotId?.startTime} - {b.slotId?.endTime}
+                            {b.slotId ? `${b.slotId.startTime} - ${b.slotId.endTime}` : <span className="text-slate-500 italic">Slot Expired</span>}
                           </td>
                           <td className="py-4 px-2 text-slate-500 text-right font-medium">{new Date(b.createdAt).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</td>
                           <td className="py-4 px-2 text-right">

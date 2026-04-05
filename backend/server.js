@@ -27,6 +27,9 @@ mongoose.connect('mongodb+srv://krishnapandit52005:AutoSalon@autosaloncluster.qe
 
 // Generate mock slots from 11 AM to 10 PM, 30 min intervals
 const generateMockSlots = async () => {
+  const existingCount = await Slot.countDocuments();
+  if (existingCount > 0) return;
+  
   await Slot.deleteMany({});
   const formatTime = (minutes) => {
     const h = Math.floor(minutes / 60);

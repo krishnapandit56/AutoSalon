@@ -10,7 +10,6 @@ export default function AdminAuth({ mode }) {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
-    
     const endpoint = mode === 'login' ? '/api/admin/login' : '/api/admin/register';
     
     try {
@@ -20,14 +19,11 @@ export default function AdminAuth({ mode }) {
         body: JSON.stringify({ username, password })
       });
       const data = await res.json();
-      
       if (!res.ok) throw new Error(data.error);
-
       if (mode === 'login') {
         localStorage.setItem('adminToken', data.token);
         navigate('/admin');
       } else {
-        // Registration successful
         navigate('/admin/login');
       }
     } catch (err) {
@@ -36,57 +32,49 @@ export default function AdminAuth({ mode }) {
   };
 
   return (
-    <div className="flex items-center justify-center min-h-[85vh] px-4 animate-in fade-in zoom-in-95 duration-500">
-      <div className="bg-white/[0.03] border border-white/10 backdrop-blur-xl p-10 rounded-3xl shadow-2xl w-full max-w-md relative overflow-hidden">
-        <div className="absolute -top-20 -right-20 w-40 h-40 bg-cyan-500/20 blur-3xl rounded-full"></div>
-        
+    <div className="flex items-center justify-center min-h-[85vh] px-4">
+      <div className="bg-white p-10 rounded-[40px] shadow-[0_20px_60px_-15px_rgba(0,0,0,0.05)] border border-gray-50 w-full max-w-md relative overflow-hidden">
         <div className="flex justify-center mb-8 relative z-10">
-           <div className="w-12 h-12 rounded-xl bg-gradient-to-tr from-fuchsia-500 to-cyan-500 flex items-center justify-center font-black text-white text-xl shadow-lg shadow-fuchsia-500/20">A</div>
+           <div className="w-12 h-12 rounded-2xl bg-gray-900 flex items-center justify-center font-black text-white text-xl shadow-xl">A</div>
         </div>
 
-        <h2 className="text-3xl font-black text-white text-center mb-2 relative z-10">
+        <h2 className="text-3xl font-light text-gray-900 text-center mb-2 uppercase tracking-tight">
           {mode === 'login' ? 'Admin Login' : 'Register Admin'}
         </h2>
-        <p className="text-center text-slate-400 mb-8 text-sm relative z-10">
-          {mode === 'login' ? 'Authenticate to manage the salon.' : 'Create a highly secure JWT account.'}
+        <p className="text-center text-gray-400 mb-8 text-[10px] uppercase font-black tracking-[0.2em]">
+          AutoSalon Security
         </p>
 
-        {error && <div className="relative z-10 bg-rose-500/10 border border-rose-500/20 text-rose-400 p-3 rounded-xl mb-6 text-sm text-center">{error}</div>}
+        {error && <div className="bg-rose-50 border border-rose-100 text-rose-500 p-4 rounded-2xl mb-8 text-xs text-center font-bold">{error}</div>}
 
-        <form onSubmit={handleSubmit} className="space-y-5 relative z-10">
-          <div>
-            <label className="block text-sm font-semibold mb-2 text-slate-300">Username</label>
+        <form onSubmit={handleSubmit} className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold ml-1">Username</label>
             <input 
-              type="text" 
-              required
-              value={username}
-              onChange={e => setUsername(e.target.value)}
-              className="w-full bg-black/40 px-4 py-3 rounded-xl border border-white/10 focus:ring-2 focus:ring-cyan-500/50 outline-none text-white transition-all shadow-inner placeholder:text-slate-600"
+              type="text" required value={username} onChange={e => setUsername(e.target.value)}
+              className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 focus:ring-2 focus:ring-rose-50 outline-none text-gray-800 transition-all"
               placeholder="e.g. manager1"
             />
           </div>
-          <div>
-            <label className="block text-sm font-semibold mb-2 text-slate-300">Password</label>
+          <div className="space-y-2">
+            <label className="text-[10px] uppercase tracking-widest text-gray-400 font-bold ml-1">Password</label>
             <input 
-              type="password" 
-              required
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              className="w-full bg-black/40 px-4 py-3 rounded-xl border border-white/10 focus:ring-2 focus:ring-cyan-500/50 outline-none text-white transition-all shadow-inner placeholder:text-slate-600"
+              type="password" required value={password} onChange={e => setPassword(e.target.value)}
+              className="w-full bg-gray-50 border-none rounded-2xl px-5 py-4 focus:ring-2 focus:ring-rose-50 outline-none text-gray-800 transition-all"
               placeholder="••••••••"
             />
           </div>
 
-          <button className="w-full py-4 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white font-bold shadow-[0_0_20px_rgba(34,211,238,0.3)] transition-all hover:-translate-y-0.5 mt-4">
-            {mode === 'login' ? 'Access Dashboard' : 'Create Account'}
+          <button className="w-full py-4 rounded-2xl bg-gray-900 text-white font-black uppercase tracking-widest text-[11px] hover:bg-gray-800 transition-all hover:shadow-xl hover:-translate-y-1 mt-4">
+            {mode === 'login' ? 'Access Control' : 'Create Profile'}
           </button>
         </form>
 
-        <div className="mt-8 pt-6 border-t border-white/10 text-center text-sm text-slate-400 relative z-10">
+        <div className="mt-10 pt-8 border-t border-gray-50 text-center text-[10px] uppercase tracking-widest font-black">
           {mode === 'login' ? (
-            <p>Need an account? <Link to="/admin/register" className="text-cyan-400 hover:text-cyan-300 font-semibold transition-colors drop-shadow-md">Register here</Link></p>
+            <p className="text-gray-400">Restricted Area. <Link to="/admin/register" className="text-rose-400 hover:text-rose-500">Apply for Access</Link></p>
           ) : (
-            <p>Already have an account? <Link to="/admin/login" className="text-cyan-400 hover:text-cyan-300 font-semibold transition-colors drop-shadow-md">Login here</Link></p>
+            <p className="text-gray-400">Already Registered? <Link to="/admin/login" className="text-rose-400 hover:text-rose-500">Sign In</Link></p>
           )}
         </div>
       </div>

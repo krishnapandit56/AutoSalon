@@ -5,12 +5,10 @@ import AdminAuth from './pages/AdminAuth';
 
 function App() {
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-fuchsia-500/30 relative overflow-hidden">
-      {/* Decorative background gradients */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[500px] opacity-20 bg-fuchsia-600 blur-[120px] rounded-full pointer-events-none"></div>
-      <div className="absolute bottom-0 right-0 w-[600px] h-[400px] opacity-20 bg-cyan-600 blur-[100px] rounded-full pointer-events-none"></div>
+    <div className="min-h-screen bg-[#FAF9F6] text-gray-800 font-sans selection:bg-rose-100 relative overflow-hidden">
+      {/* Subtle Pastel Background Accent */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[600px] opacity-30 bg-rose-50 blur-[120px] rounded-full pointer-events-none"></div>
 
-      {/* Pages render locally. Shared global nav is removed to keep Customer and Admin completely physically isolated as requested. */}
       <main className="relative z-10 w-full min-h-[90vh]">
         <Routes>
           <Route path="/" element={<Customer />} />
@@ -20,8 +18,8 @@ function App() {
         </Routes>
       </main>
 
-      <footer className="relative z-10 py-6 text-center text-xs text-slate-700">
-        <a href="/admin/login" className="hover:text-slate-400 transition-colors">Admin Portal</a>
+      <footer className="relative z-10 py-10 text-center text-[10px] uppercase tracking-[0.2em] text-gray-400">
+        <a href="/admin/login" className="hover:text-gray-600 transition-colors">Admin Portal</a>
       </footer>
     </div>
   );

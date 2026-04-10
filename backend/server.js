@@ -5,6 +5,17 @@ import cron from 'node-cron';
 import twilio from 'twilio';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+
+const app = express();
+const httpServer = createServer(app);
+const io = new Server(httpServer, {
+  cors: { origin: "*" }
+});
+
+app.use(cors());
+app.use(express.json());
 
 const twilioClient = twilio('AC5bcbea1a97271175fd382126275a1256', 'ea1d2c94c26aead893387f1ccc6c7d39');
 
@@ -14,15 +25,35 @@ import Inventory from './models/Inventory.js';
 import Churn from './models/Churn.js';
 import Admin from './models/Admin.js';
 
-const app = express();
-app.use(cors());
-app.use(express.json());
-
 const JWT_SECRET = 'supersecret_autosalon_key_2026';
+
+// Service Data with 3 levels and price ranges
+const SERVICES = {
+  Threading: { Basic: "50-100", Intermediate: "100-200", Expert: "200-500" },
+  Waxing: { Basic: "200-400", Intermediate: "400-800", Expert: "800-1500+" },
+  Cleanup: { Basic: "300-500", Intermediate: "500-800", Expert: "800-1200" },
+  Massage: { Basic: "800-1200", Intermediate: "1200-2500", Expert: "2500-5000+" },
+  Facial: { Basic: "500-800", Intermediate: "800-1500", Expert: "1500-3000+" },
+  Detan: { Basic: "400-600", Intermediate: "600-1000", Expert: "1000-2000" },
+  Blowout: { Basic: "300-500", Intermediate: "500-1000", Expert: "1000-2000+" },
+  Manicure: { Basic: "400-600", Intermediate: "600-1000", Expert: "1000-1500" },
+  Haircut: { Basic: "200-300", Intermediate: "300-500", Expert: "500-1000+" },
+  Keratin: { Basic: "2000-3500", Intermediate: "3500-6000", Expert: "6000-10000+" },
+  Pedicure: { Basic: "500-700", Intermediate: "700-1200", Expert: "1200-2000" },
+  Hair_Color: { Basic: "1000-2000", Intermediate: "2000-4000", Expert: "4000-8000+" }
+};
 
 // Connect to MongoDB
 mongoose.connect('mongodb+srv://krishnapandit52005:AutoSalon@autosaloncluster.qetbmgu.mongodb.net/salon_db?appName=AutoSalonCluster')
-  .then(() => console.log('Connected to MongoDB'))
+  .then(async () => {
+    console.log('Connected to MongoDB');
+    // Only clear orphaned held slots on startup
+    const oldHeldSlots = await Slot.countDocuments({ status: 'held' });
+    if(oldHeldSlots > 0) {
+        await Slot.updateMany({ status: 'held' }, { $set: { status: 'available', heldBy: null, holdExpiry: null } });
+        console.log(`Startup Cleanup: Freed frozen slots.`);
+    }
+  })
   .catch(err => console.error('MongoDB connection error:', err));
 
 // Generate mock slots from 11 AM to 10 PM, 30 min intervals
@@ -37,42 +68,46 @@ const generateMockSlots = async () => {
     const ampm = h >= 12 && h < 24 ? 'pm' : 'am';
     let displayH = h % 12;
     if (displayH === 0) displayH = 12;
-    
-    if (m === 0) {
-      return displayH + ampm;
-    } else {
-      return displayH + '.' + m + ' ' + ampm;
-    }
+    return m === 0 ? displayH + ampm : displayH + '.' + m + ' ' + ampm;
   };
 
   const slots = [];
   for (let time = 660; time <= 1320; time += 30) {
-    slots.push({ startTime: formatTime(time), endTime: formatTime(time + 30) });
+    slots.push({ time: formatTime(time) });
   }
   await Slot.insertMany(slots);
-  console.log('Mock slots generated matched to exact format requested.');
+  console.log('Mock slots generated.');
 };
 generateMockSlots();
 
-// Delete old locks (e.g. older than 5 minutes)
-const cleanUpLocks = async () => {
-    const expirationTime = new Date(Date.now() - 5 * 60 * 1000);
-    await Slot.updateMany(
-        { status: 'locked', lockedAt: { $lt: expirationTime } },
-        { $set: { status: 'free', lockedAt: null, sessionId: null } }
-    );
+// Auto-release expired holds (5 minutes)
+const cleanUpHolds = async () => {
+    const now = new Date();
+    const expiredSlots = await Slot.find({ status: 'held', holdExpiry: { $lt: now } });
+    if (expiredSlots.length > 0) {
+        for (const slot of expiredSlots) {
+            await Slot.updateOne({ _id: slot._id }, { $set: { status: 'available', heldBy: null, holdExpiry: null } });
+            io.emit('slot-updated', { slotId: slot._id, status: 'available' });
+        }
+        console.log(`Cleanup: Released ${expiredSlots.length} expired holds.`);
+    }
 };
-setInterval(cleanUpLocks, 60 * 1000); // Check every minute
+setInterval(cleanUpHolds, 30 * 1000); // Check every 30 seconds
 
-// Free all slots every day at 11:00 PM
+// Reset all available/held slots daily at 11:00 PM (keep Booked for history)
 cron.schedule('0 23 * * *', async () => {
     try {
-        await Slot.updateMany({}, { $set: { status: 'free', lockedAt: null, sessionId: null } });
-        await Booking.deleteMany({}); // Clears today's bookings
-        console.log('Daily Reset: All slots and bookings cleared successfully at 11:00 PM.');
+        await Slot.updateMany({ status: { $ne: 'booked' } }, { $set: { status: 'available', heldBy: null, holdExpiry: null } });
+        console.log('Daily Reset: Slots freed successfully.');
     } catch(err) {
         console.error('Error during daily slot reset:', err);
     }
+});
+
+// Socket.io Connection
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+  socket.on('disconnect', () => console.log('User disconnected'));
 });
 
 // Auth Middleware
@@ -89,6 +124,120 @@ const authMiddleware = (req, res, next) => {
 };
 
 // API Routes
+
+// 1. Get all slots
+app.get('/api/slots', async (req, res) => {
+  try {
+    const slots = await Slot.find();
+    res.json(slots);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 2. Hold a slot (Atomic)
+app.post('/api/hold-slot', async (req, res) => {
+  try {
+    const { slotId, userId } = req.body;
+    const holdExpiry = new Date(Date.now() + 5 * 60 * 1000); // 5 minutes
+
+    const slot = await Slot.findOneAndUpdate(
+      { _id: slotId, status: 'available' },
+      { status: 'held', heldBy: userId, holdExpiry },
+      { new: true }
+    );
+
+    if (!slot) {
+      return res.status(400).json({ error: 'Slot already booked or held' });
+    }
+
+    io.emit('slot-updated', { slotId, status: 'held', heldBy: userId, holdExpiry });
+    res.json(slot);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// 3. Confirm Booking
+app.post('/api/confirm-booking', async (req, res) => {
+  try {
+    const { slotId, userId, customerName, phone, service, age, gender, city } = req.body;
+    
+    // Check if slot is held by this user
+    const slot = await Slot.findOne({ _id: slotId, status: 'held', heldBy: userId });
+    
+    if (!slot) {
+      return res.status(400).json({ error: 'Slot is not held by you or has expired' });
+    }
+
+    // Determine service price (mocking avg based on level)
+    let last_visit_spend = 500;
+    if (service.includes('Intermediate')) last_visit_spend = 800;
+    else if (service.includes('Expert')) last_visit_spend = 1500;
+
+    // Process Churn Data (Sync with prediction model)
+    let churnData = await Churn.findOne({ phone });
+    const now = new Date();
+
+    if (churnData) {
+      const diffTime = Math.abs(now - new Date(churnData.date));
+      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+      
+      churnData.days_since_last_visit = diffDays;
+      churnData.total_visits += 1;
+      churnData.total_spend += last_visit_spend;
+      churnData.avg_spend_per_visit = churnData.total_spend / churnData.total_visits;
+      churnData.last_visit_spend = last_visit_spend;
+      churnData.date = now;
+      if (age) churnData.age = age;
+      if (gender) churnData.gender = gender;
+      if (city) churnData.city = city;
+      await churnData.save();
+    } else {
+      churnData = new Churn({
+        name: customerName,
+        phone,
+        age: age || 25,
+        gender: gender || 'Female',
+        city: city || 'nagpur',
+        total_visits: 1,
+        total_spend: last_visit_spend,
+        avg_spend_per_visit: last_visit_spend,
+        last_visit_spend: last_visit_spend,
+        booking_source: 'web'
+      });
+      await churnData.save();
+    }
+
+    // Create booking
+    const booking = new Booking({ slotId, customerName, phone, service: service.split(' - ')[0].toLowerCase() });
+    await booking.save();
+
+    // Mark slot as booked
+    slot.status = 'booked';
+    slot.heldBy = null;
+    slot.holdExpiry = null;
+    await slot.save();
+
+    io.emit('slot-updated', { slotId, status: 'booked' });
+
+    try {
+        const formattedPhone = phone.startsWith('+') ? phone : '+91' + phone;
+        const msg = `Hi ${customerName}! Your AutoSalon appointment for ${service} is confirmed for ${slot.time}.`;
+        await twilioClient.messages.create({
+            body: msg,
+            from: '+13185343593',
+            to: formattedPhone
+        });
+    } catch (smsErr) {
+        console.error('Failed to send SMS:', smsErr.message);
+    }
+
+    res.json(booking);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // Admin Auth Routes
 app.post('/api/admin/register', async (req, res) => {
@@ -120,143 +269,6 @@ app.post('/api/admin/login', async (req, res) => {
   }
 });
 
-// 1. Get all slots
-app.get('/api/slots', async (req, res) => {
-  try {
-    const slots = await Slot.find();
-    res.json(slots);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 2. Lock a slot
-app.post('/api/slots/:id/lock', async (req, res) => {
-  try {
-    const { id } = req.params;
-    const { sessionId } = req.body;
-    
-    // Attempt to lock if it's currently free
-    const slot = await Slot.findOneAndUpdate(
-      { _id: id, status: 'free' },
-      { status: 'locked', lockedAt: new Date(), sessionId },
-      { new: true }
-    );
-
-    if (!slot) {
-      return res.status(400).json({ error: 'Slot is already locked or booked' });
-    }
-
-    res.json(slot);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 3. Create a booking
-app.post('/api/bookings', async (req, res) => {
-  try {
-    const { slotId, customerName, phone, service, sessionId, age, gender, city } = req.body;
-    
-    // Check if person already booked
-    const existingRegex = new RegExp("^" + customerName + "$", 'i');
-    const existingBooking = await Booking.findOne({ customerName: existingRegex });
-    if (existingBooking) {
-      return res.status(400).json({ error: 'You have already booked a slot. Only one slot per person is allowed.' });
-    }
-
-    // Verify the slot is locked by this session
-    const slot = await Slot.findOne({ _id: slotId, status: 'locked', sessionId });
-    
-    if (!slot) {
-      return res.status(400).json({ error: 'Slot is not locked by you or has expired' });
-    }
-
-    // Determine service price setup
-    let last_visit_spend = 0;
-    if (service === 'basic') last_visit_spend = 500;
-    else if (service === 'intermediate') last_visit_spend = 800;
-    else if (service === 'expert') last_visit_spend = 1200;
-
-    // Process Churn Data
-    let churnData = await Churn.findOne({ phone });
-    const now = new Date();
-
-    if (churnData) {
-      const diffTime = Math.abs(now - new Date(churnData.date));
-      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      
-      const oldGapsCount = Math.max(0, churnData.total_visits - 1);
-      const newGapsCount = churnData.total_visits;
-      const newAvgGap = ((churnData.avg_visit_gap_days * oldGapsCount) + diffDays) / newGapsCount;
-      
-      const newTotalVisits = churnData.total_visits + 1;
-      const newTotalSpend = churnData.total_spend + last_visit_spend;
-      const newAvgSpend = newTotalSpend / newTotalVisits;
-
-      churnData.days_since_last_visit = diffDays;
-      churnData.avg_visit_gap_days = newAvgGap;
-      churnData.total_visits = newTotalVisits;
-      churnData.total_spend = newTotalSpend;
-      churnData.avg_spend_per_visit = newAvgSpend;
-      churnData.last_visit_spend = last_visit_spend;
-      churnData.num_services_used = newTotalVisits;
-      churnData.date = now;
-      if (age) churnData.age = age;
-      if (gender) churnData.gender = gender;
-      if (city) churnData.city = city;
-      
-      await churnData.save();
-    } else {
-      churnData = new Churn({
-        name: customerName,
-        phone,
-        age: age || 0,
-        gender: gender || 'Unknown',
-        city: city || 'nagpur',
-        total_visits: 1,
-        days_since_last_visit: 0,
-        avg_visit_gap_days: 0,
-        num_services_used: 1,
-        has_preferred_employee: 0,
-        avg_spend_per_visit: last_visit_spend,
-        last_visit_spend: last_visit_spend,
-        total_spend: last_visit_spend,
-        booking_source: 'web'
-      });
-      await churnData.save();
-    }
-
-    // Create booking
-    const booking = new Booking({ slotId, customerName, phone, service });
-    await booking.save();
-
-    // Mark slot as booked
-    slot.status = 'booked';
-    slot.lockedAt = null;
-    slot.sessionId = null;
-    await slot.save();
-
-    try {
-        const formattedPhone = phone.startsWith('+') ? phone : '+91' + phone;
-        const msg = "Hi " + customerName + "! Your AutoSalon appointment for a " + service + " service is confirmed for " + slot.startTime;
-        await twilioClient.messages.create({
-            body: msg,
-            from: '+13185343593',
-            to: formattedPhone
-        });
-        console.log('Confirmation SMS sent to ' + formattedPhone);
-    } catch (smsErr) {
-        console.error('Failed to send SMS:', smsErr.message);
-    }
-
-    res.json(booking);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-// 4. Get all bookings (Admin)
 app.get('/api/bookings', authMiddleware, async (req, res) => {
   try {
     const bookings = await Booking.find().populate('slotId').sort({ createdAt: -1 });
@@ -266,7 +278,6 @@ app.get('/api/bookings', authMiddleware, async (req, res) => {
   }
 });
 
-// 5. Inventory Routes
 app.get('/api/inventory', authMiddleware, async (req, res) => {
   try {
     const inventory = await Inventory.find();
@@ -306,26 +317,56 @@ app.delete('/api/inventory/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// 6. Churn Prediction Data Routes
-app.post('/api/churn', authMiddleware, async (req, res) => {
-  try {
-    const { name, age, gender, city } = req.body;
-    const data = new Churn({ name, age, gender, city });
-    await data.save();
-    res.json(data);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 app.get('/api/churn', authMiddleware, async (req, res) => {
   try {
-    const churnData = await Churn.find().sort({ date: -1 });
+    const churnData = await Churn.find().sort({ total_visits: -1 }).limit(100);
     res.json(churnData);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
+app.post('/api/churn/predict', authMiddleware, async (req, res) => {
+  try {
+    const { phone } = req.body;
+    if (!phone) return res.status(400).json({ error: 'Phone number is required.' });
+
+    // Normalize phone numbers for search
+    const cleanPhone = phone.replace(/\D/g, ''); // Remove all non-digits
+    const last10 = cleanPhone.slice(-10);
+    
+    // Try finding by exact phone, or by last 10 digits
+    let churnData = await Churn.findOne({ 
+        $or: [
+            { phone: phone },
+            { phone: cleanPhone },
+            { phone: { $regex: last10 + '$' } }
+        ]
+    }).lean();
+    
+    if (!churnData) {
+        // Return 200 with an error so the frontend doesn't see a "failed request"
+        return res.json({ error: 'Data Not Found: No churn metrics available for this customer yet.' });
+    }
+
+    const response = await fetch('http://localhost:5005/predict', {
+       method: 'POST',
+       headers: { 'Content-Type': 'application/json' },
+       body: JSON.stringify(churnData)
+    });
+    
+    if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to connect to ML Backend.');
+    }
+
+    const result = await response.json();
+    res.json(result);
+  } catch (error) {
+    console.error('Prediction Error:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const PORT = 5000;
-app.listen(PORT, () => console.log('Server running on port ' + PORT));
+httpServer.listen(PORT, () => console.log('Server running on port ' + PORT));

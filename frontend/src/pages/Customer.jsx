@@ -31,38 +31,12 @@ export default function Customer() {
   const [userId] = useState(() => Math.random().toString(36).substring(7));
   const [statusMsg, setStatusMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(0);
-
-  useEffect(() => {
-    fetchSlots();
-    
-    socket.on('slot-updated', (data) => {
-      setSlots(prev => prev.map(s => s._id === data.slotId ? { ...s, ...data } : s));
-      // If our held slot was released by server (expiry)
-      if (selectedSlot?._id === data.slotId && data.status === 'available') {
-        setSelectedSlot(null);
-        setStatusMsg('Your session has expired. Please select a slot again.');
-      }
-    });
-
-    return () => socket.off('slot-updated');
-  }, [selectedSlot]);
-
-  useEffect(() => {
-    let timer;
-    if (selectedSlot && timeLeft > 0) {
-      timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
-    } else if (selectedSlot && timeLeft === 0) {
-      // Only reset when a slot was actively held and the timer expired
-      setSelectedSlot(null);
-      setStatusMsg('Your hold has expired. Please select a slot again.');
-    }
-    return () => clearInterval(timer);
-  }, [selectedSlot, timeLeft]);
-
-  const fetchSlots = async () => {
+  const fetchSlots = async (serviceName = '') => {
     try {
-      const res = await fetch('http://localhost:5000/api/slots');
+      const url = serviceName 
+        ? `http://localhost:5000/api/slots?service=${encodeURIComponent(serviceName)}` 
+        : 'http://localhost:5000/api/slots';
+      const res = await fetch(url);
       const data = await res.json();
       setSlots(data);
     } catch (err) {
@@ -70,24 +44,30 @@ export default function Customer() {
     }
   };
 
-  const holdSlot = async (slot) => {
-    if (slot.status !== 'available') return;
-    setIsLoading(true);
+  useEffect(() => {
+    setSelectedSlot(null);
     setStatusMsg('');
-    try {
-      const res = await fetch('http://localhost:5000/api/hold-slot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ slotId: slot._id, userId })
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error);
-      setSelectedSlot(data);
-      setTimeLeft(300); // 5 minutes
-    } catch (err) {
-      setStatusMsg(err.message);
+    if (selectedService && selectedLevel) {
+      fetchSlots(`${selectedService} - ${selectedLevel}`);
+    } else {
+      fetchSlots();
     }
-    setIsLoading(false);
+  }, [selectedService, selectedLevel]);
+
+  useEffect(() => {
+    const onBookingConfirmed = () => {
+      if (selectedService && selectedLevel) {
+        fetchSlots(`${selectedService} - ${selectedLevel}`);
+      }
+    };
+    socket.on('booking-confirmed', onBookingConfirmed);
+    return () => socket.off('booking-confirmed', onBookingConfirmed);
+  }, [selectedService, selectedLevel]);
+
+  const handleSlotSelect = (slot) => {
+    if (slot.status !== 'available') return;
+    setStatusMsg('');
+    setSelectedSlot(slot);
   };
 
   const bookAppointment = async () => {
@@ -127,11 +107,7 @@ export default function Customer() {
     setIsLoading(false);
   };
 
-  const formatTimer = (seconds) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, '0')}`;
-  };
+
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-12 font-sans text-gray-800">
@@ -208,11 +184,10 @@ export default function Customer() {
               {slots.map(s => {
                 const isSelected = selectedSlot?._id === s._id;
                 const isAvailable = s.status === 'available';
-                const isHeldByMe = s.status === 'held' && s.heldBy === userId;
                 
                 let btnStyle = "bg-gray-50 text-gray-300 cursor-not-allowed";
-                if (isAvailable || isHeldByMe) {
-                  btnStyle = isSelected || isHeldByMe
+                if (isAvailable) {
+                  btnStyle = isSelected
                     ? "bg-rose-500 text-white shadow-lg shadow-rose-200 scale-105 border-transparent"
                     : "bg-white border border-gray-100 text-gray-600 hover:border-gray-200 hover:bg-gray-50 hover:shadow-sm";
                 }
@@ -220,8 +195,8 @@ export default function Customer() {
                 return (
                   <button 
                     key={s._id}
-                    disabled={!isAvailable && !isHeldByMe}
-                    onClick={() => holdSlot(s)}
+                    disabled={!isAvailable}
+                    onClick={() => handleSlotSelect(s)}
                     className={`py-3 px-1 rounded-full text-[11px] font-bold tracking-tighter transition-all duration-300 ${btnStyle}`}
                   >
                     {s.time}
@@ -238,11 +213,7 @@ export default function Customer() {
                 <span className="text-[10px] uppercase tracking-[0.2em] text-rose-300 font-bold px-3 py-1 rounded-full bg-rose-50">Step 03</span>
                 <h2 className="text-xl font-medium tracking-tight">Patient Details</h2>
               </div>
-              {selectedSlot && (
-                <div className="text-[10px] uppercase font-bold tracking-widest px-3 py-1 rounded-full bg-amber-50 text-amber-600 animate-pulse">
-                  Holding for {formatTimer(timeLeft)}
-                </div>
-              )}
+
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -17,7 +17,7 @@ const io = new Server(httpServer, {
 app.use(cors());
 app.use(express.json());
 
-const twilioClient = twilio('AC5bcbea1a97271175fd382126275a1256', 'ea1d2c94c26aead893387f1ccc6c7d39');
+const twilioClient = twilio('AC5bcbea1a97271175fd382126275a1256', '746d244b6055adbb82cdc1f2b3b7c42c');
 
 import Slot from './models/Slot.js';
 import Booking from './models/Booking.js';
@@ -128,7 +128,25 @@ const authMiddleware = (req, res, next) => {
 // 1. Get all slots
 app.get('/api/slots', async (req, res) => {
   try {
-    const slots = await Slot.find();
+    const { service } = req.query;
+    let slots = await Slot.find().lean();
+    
+    if (service) {
+      const bookedService = service.toLowerCase();
+      // Check bookings for this exact service to block locally
+      const bookings = await Booking.find({ service: bookedService }).lean();
+      const bookedSlotIds = bookings.map(b => b.slotId.toString());
+      
+      slots = slots.map(s => {
+        if (bookedSlotIds.includes(s._id.toString())) {
+          return { ...s, status: 'booked' };
+        }
+        return { ...s, status: 'available' };
+      });
+    } else {
+      slots = slots.map(s => ({ ...s, status: 'available' }));
+    }
+    
     res.json(slots);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -163,11 +181,19 @@ app.post('/api/confirm-booking', async (req, res) => {
   try {
     const { slotId, userId, customerName, phone, service, age, gender, city } = req.body;
     
-    // Check if slot is held by this user
-    const slot = await Slot.findOne({ _id: slotId, status: 'held', heldBy: userId });
+    // Check if slot exists in DB at all
+    const slot = await Slot.findById(slotId);
     
     if (!slot) {
-      return res.status(400).json({ error: 'Slot is not held by you or has expired' });
+      return res.status(400).json({ error: 'Invalid slot selection' });
+    }
+
+    const formattedService = service.toLowerCase();
+    
+    // Ensure this slot is not already booked for THIS specific service
+    const existingBooking = await Booking.findOne({ slotId, service: formattedService });
+    if (existingBooking) {
+      return res.status(400).json({ error: 'This time slot is already booked for this specific service and level.' });
     }
 
     // Determine service price (mocking avg based on level)
@@ -252,17 +278,12 @@ app.post('/api/confirm-booking', async (req, res) => {
       await churnData.save();
     }
 
-    // Create booking
-    const booking = new Booking({ slotId, customerName, phone, service: service.split(' - ')[0].toLowerCase() });
+    // Create booking mapping full specific service to allow independent logic
+    const booking = new Booking({ slotId, customerName, phone, service: formattedService });
     await booking.save();
 
-    // Mark slot as booked
-    slot.status = 'booked';
-    slot.heldBy = null;
-    slot.holdExpiry = null;
-    await slot.save();
-
-    io.emit('slot-updated', { slotId, status: 'booked' });
+    // Broadcast that THIS service has been booked at this slot
+    io.emit('booking-confirmed', { slotId, service: formattedService });
 
     try {
         const formattedPhone = phone.startsWith('+') ? phone : '+91' + phone;

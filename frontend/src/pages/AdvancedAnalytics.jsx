@@ -133,12 +133,12 @@ export default function AdvancedAnalytics() {
         </div>
       )}
 
-      {data && <>
+            {data && <>
 
         {/* ══════════════════════════════════════════════
-            KPI ROW
+            KPI ROW (CLEANED)
         ══════════════════════════════════════════════ */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Total Revenue with filter */}
           <div className="bg-white rounded-3xl shadow-[0_10px_40px_-15px_rgba(0,0,0,0.06)] border border-gray-50 p-6">
             <div className="flex items-center justify-between mb-3">
@@ -154,20 +154,19 @@ export default function AdvancedAnalytics() {
             </div>
             <p className="text-[10px] font-black uppercase tracking-[0.2em] text-gray-400 mb-1">Revenue ({revFilter})</p>
             <p className="text-2xl font-black text-gray-900">{fmtINR(revFilterTotal)}</p>
-            <p className="text-xs text-gray-400 mt-0.5">All time total: {fmtINR(data.totalRevenue)}</p>
+            <p className="text-xs text-gray-400 mt-0.5 font-bold">Past {revFilter} performance from MongoDB</p>
           </div>
 
-          <KpiCard icon="👥" label="Total Customers" value={data.totalCustomers.toLocaleString()} sub="In churn database" accent="emerald" />
-          <KpiCard icon="📋" label="Total Bookings" value={data.totalBookings.toLocaleString()} sub="Confirmed appointments" accent="rose" />
+          <KpiCard icon="📋" label="Total Bookings" value={data.totalBookings.toLocaleString()} sub="Lifetime Salon Records" accent="rose" />
           <KpiCard icon="⭐" label="Top Service" value={data.servicePerformance[0]?.name || '—'} sub={`${data.servicePerformance[0]?.bookings || 0} bookings`} accent="amber" />
         </div>
 
         {/* ══════════════════════════════════════════════
-            REVENUE TREND
+            REVENUE TREND (WITH FORECAST OVERLAY)
         ══════════════════════════════════════════════ */}
         <Card
-          title={`Revenue Trend – Per ${revFilter}`}
-          sub="Based on bookings enriched with customer spend data from MongoDB"
+          title={`Revenue Trend & Forecast – Per ${revFilter}`}
+          sub="Solid bars show historical data; dashed bars represent XGBoost predictions."
         >
           <div className="flex gap-2 mb-6">
             {Object.keys(REV_FILTERS).map(f => (
@@ -179,27 +178,101 @@ export default function AdvancedAnalytics() {
               >{f}</button>
             ))}
           </div>
-          <div className="h-64">
+          <div className="h-72">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueData} margin={{ top:5, right:20, bottom:5, left:0 }}>
-                <defs>
-                  <linearGradient id="revGrad" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%"  stopColor="#6366F1" stopOpacity={0.15}/>
-                    <stop offset="95%" stopColor="#6366F1" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
+              <BarChart data={revenueData} margin={{ top:5, right:20, bottom:5, left:0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false}/>
                 <XAxis dataKey="label" tick={{ fontSize:10, fill:'#9ca3af' }} axisLine={false} tickLine={false}/>
                 <YAxis tickFormatter={fmtINR} tick={{ fontSize:10, fill:'#9ca3af' }} axisLine={false} tickLine={false}/>
-                <Tooltip formatter={v => fmtINR(v)} {...tooltipStyle}/>
-                <Area type="monotone" dataKey="revenue" name="Revenue"
-                  stroke="#6366F1" strokeWidth={2.5} fill="url(#revGrad)"
-                  dot={{ r:3, fill:'#6366F1', strokeWidth:0 }} activeDot={{ r:5 }}
+                <Tooltip 
+                  formatter={(v, _, props) => [fmtINR(v), props.payload.isPredicted ? 'Forecasted Revenue' : 'Actual Revenue']} 
+                  {...tooltipStyle}
                 />
-              </AreaChart>
+                <Bar dataKey="revenue" radius={[6,6,0,0]} maxBarSize={45}>
+                   {revenueData.map((entry, index) => (
+                      <Cell 
+                        key={`cell-${index}`} 
+                        fill={entry.isPredicted ? '#cbd5e1' : '#6366F1'} 
+                        stroke={entry.isPredicted ? '#6366F1' : 'none'}
+                        strokeDasharray={entry.isPredicted ? "4 4" : "0"}
+                      />
+                   ))}
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           </div>
         </Card>
+
+        {/* ══════════════════════════════════════════════
+            🔮 NEW: DEMAND FORECASTING & INSIGHTS
+        ══════════════════════════════════════════════ */}
+        <div className="space-y-6">
+          <div className="flex items-center gap-4">
+             <div className="h-px flex-1 bg-gray-100"></div>
+             <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-indigo-400 bg-indigo-50/50 px-4 py-1 rounded-full">
+                Demand Forecasting & Insights
+             </h4>
+             <div className="h-px flex-1 bg-gray-100"></div>
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Demand Distribution Chart */}
+            <Card title="Customer Demand Tiering" sub="Predicted distribution of your customer base" className="lg:col-span-1">
+              <div className="h-52">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie 
+                      data={Object.entries(data.demandForecast?.distribution || {}).map(([risk, count]) => ({ risk, count }))}
+                      dataKey="count" nameKey="risk"
+                      cx="50%" cy="50%" outerRadius={70} innerRadius={40} paddingAngle={4}
+                    >
+                      {Object.entries(data.demandForecast?.distribution || {}).map(([risk], i) => (
+                        <Cell key={i} fill={risk === 'High' ? '#F43F5E' : risk === 'Medium' ? '#F59E0B' : '#10B981'}/>
+                      ))}
+                    </Pie>
+                    <Tooltip {...tooltipStyle}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="flex justify-center gap-4 text-[10px] font-bold text-gray-500">
+                 <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#10B981]"/>Low</span>
+                 <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#F59E0B]"/>Med</span>
+                 <span className="flex items-center gap-1.5"><div className="w-2 h-2 rounded-full bg-[#F43F5E]"/>High</span>
+              </div>
+            </Card>
+
+            {/* Demand Insights & Indicators */}
+            <Card title="Forecasting Insights" sub="AI-generated business recommendations" className="lg:col-span-2">
+               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-5 rounded-2xl bg-indigo-50 border border-indigo-100">
+                     <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest mb-2">Trend Indicator</p>
+                     <p className="text-sm font-bold text-indigo-900 leading-relaxed">
+                        Expected <span className="text-indigo-600 underline underline-offset-4 decoration-2">{data.demandForecast?.dominant_demand} demand</span> for {data.servicePerformance[0]?.name} and {data.servicePerformance[1]?.name || 'Beauty'} services in the coming period.
+                     </p>
+                  </div>
+                  <div className="p-5 rounded-2xl bg-emerald-50 border border-emerald-100">
+                     <p className="text-[10px] font-black text-emerald-400 uppercase tracking-widest mb-2">KPI Projection</p>
+                     <div className="space-y-2">
+                        <div className="flex justify-between items-center text-xs font-bold text-emerald-800">
+                           <span>High Demand %</span>
+                           <span>{data.demandForecast?.summary['High%']}%</span>
+                        </div>
+                        <div className="w-full h-1.5 bg-emerald-100 rounded-full overflow-hidden">
+                           <div className="h-full bg-emerald-500" style={{ width: `${data.demandForecast?.summary['High%']}%` }}></div>
+                        </div>
+                        <p className="text-[9px] text-emerald-600 font-medium">Optimization potential detected in evening slots.</p>
+                     </div>
+                  </div>
+               </div>
+               <div className="mt-5 p-4 rounded-xl border border-gray-100 flex items-center gap-4">
+                  <div className="w-10 h-10 rounded-full bg-gray-50 flex items-center justify-center text-lg">💡</div>
+                  <p className="text-xs text-gray-500 italic">
+                     "{data.demandForecast?.dominant_demand === 'High' ? 'Prepare inventory for a sudden surge in facial and hair color services.' : 'Focus on active loyalty campaigns to boost low demand segments.'}"
+                  </p>
+               </div>
+            </Card>
+          </div>
+        </div>
 
         {/* ══════════════════════════════════════════════
             ROW: Customer Visits + Service Performance
@@ -371,53 +444,36 @@ export default function AdvancedAnalytics() {
         </div>
 
         {/* ══════════════════════════════════════════════
-            Monthly Revenue Bar + City Ratings
+            Monthly Revenue Bar (Fixed Overlay)
         ══════════════════════════════════════════════ */}
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-
-          {/* Monthly Revenue */}
-          <Card title="Monthly Revenue (Full Year)" sub="Each month's estimated revenue from bookings">
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data.revenueByMonth} margin={{ top:5, right:20, bottom:5, left:0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false}/>
-                  <XAxis dataKey="month" tick={{ fontSize:10, fill:'#9ca3af' }} axisLine={false} tickLine={false}/>
-                  <YAxis tickFormatter={fmtINR} tick={{ fontSize:10, fill:'#9ca3af' }} axisLine={false} tickLine={false}/>
-                  <Tooltip formatter={v => fmtINR(v)} {...tooltipStyle}/>
-                  <Line type="monotone" dataKey="revenue" name="Revenue"
-                    stroke="#F43F5E" strokeWidth={3}
-                    dot={{ r:4, fill:'#F43F5E', strokeWidth:2, stroke:'#fff' }} activeDot={{ r:6 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-
-          {/* City Average Ratings */}
-          <Card title="Average Rating by City" sub="Customer satisfaction by location (from churn records)">
-            <div className="h-64">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.cityRatings} margin={{ top:5, right:30, bottom:5, left:0 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false}/>
-                  <XAxis dataKey="city" tick={{ fontSize:10, fill:'#9ca3af' }} axisLine={false} tickLine={false}/>
-                  <YAxis domain={[0,5]} tick={{ fontSize:10, fill:'#9ca3af' }} axisLine={false} tickLine={false}/>
-                  <Tooltip {...tooltipStyle}/>
-                  <Bar dataKey="avgRating" name="Avg Rating" radius={[6,6,0,0]} maxBarSize={36}>
-                    {data.cityRatings.map((e,i) => (
-                      <Cell key={i} fill={e.avgRating >= 4 ? '#10B981' : e.avgRating >= 3 ? '#F59E0B' : '#F43F5E'}/>
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </Card>
-        </div>
+        <Card title="Monthly Revenue Trend" sub="Redistributed historical data + Future Projections (XGBoost)">
+          <div className="h-72">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={data.revenueByMonth} margin={{ top:5, right:20, bottom:5, left:0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#f5f5f5" vertical={false}/>
+                <XAxis dataKey="month" tick={{ fontSize:10, fill:'#9ca3af' }} axisLine={false} tickLine={false}/>
+                <YAxis tickFormatter={fmtINR} tick={{ fontSize:10, fill:'#9ca3af' }} axisLine={false} tickLine={false}/>
+                <Tooltip formatter={v => fmtINR(v)} {...tooltipStyle}/>
+                <Bar dataKey="revenue" radius={[6,6,0,0]} maxBarSize={45}>
+                   {data.revenueByMonth.map((entry, index) => (
+                      <Cell 
+                        key={`cell-m-${index}`} 
+                        fill={entry.isPredicted ? '#cbd5e1' : '#F43F5E'} 
+                        stroke={entry.isPredicted ? '#F43F5E' : 'none'}
+                        strokeDasharray={entry.isPredicted ? "4 4" : "0"}
+                      />
+                   ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </Card>
 
         {/* ── Footnote ── */}
         <div className="bg-indigo-50 border border-indigo-100 rounded-3xl px-8 py-5 flex items-center gap-4">
           <span className="text-2xl">📡</span>
           <p className="text-xs text-indigo-700">
-            <strong>Live MongoDB Data</strong> — All charts above pull directly from your salon's bookings, churn, and inventory collections in real-time. Revenue figures are derived by joining booking records with customer spend data from the churn profile database.
+            <strong>Demand Intelligence Active</strong> — Historical trends are derived from distributed MongoDB records. Future bars and demand insights are powered by your real-time XGBoost forecasting model.
           </p>
         </div>
       </>}

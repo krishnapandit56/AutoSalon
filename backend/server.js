@@ -238,6 +238,9 @@ app.post('/api/confirm-booking', async (req, res) => {
       const diffTime = Math.abs(now - new Date(churnData.date));
       const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
       
+      // SYNC NAME: Ensure the churn entry name matches the booking name for easy lookup
+      churnData.name = customerName;
+      
       churnData.days_since_last_visit = diffDays;
       churnData.total_visits += 1;
       churnData.total_spend += last_visit_spend;
@@ -281,6 +284,7 @@ app.post('/api/confirm-booking', async (req, res) => {
         avg_advance_booking_days: 0,
         booking_source: 'Online_App',
         visit_time_preference: visit_time_preference,
+        preferred_service: service,
         churn_risk_category: 'Medium',
       });
       await churnData.save();
@@ -398,6 +402,30 @@ app.get('/api/churn', authMiddleware, async (req, res) => {
   }
 });
 
+// Heuristic fallback for when ML Backend is unavailable
+const calculateFallbackChurn = (data) => {
+  // Simple heuristic: high visits + high spend = low risk. 
+  // High gap + low rating = high risk.
+  let risk = 50; // Start at 50%
+  if (data.total_visits > 10) risk -= 20;
+  if (data.avg_rating > 4) risk -= 10;
+  if (data.days_since_last_visit > 60) risk += 30;
+  if (data.num_complaints > 0) risk += 20;
+  
+  risk = Math.max(5, Math.min(95, risk)); // Clamp 5-95%
+  
+  let level = "Medium";
+  if (risk > 70) level = "High Risk";
+  else if (risk < 30) level = "Low Risk";
+  
+  return {
+    churn: risk > 50 ? 1 : 0,
+    churn_risk: risk,
+    risk_level: level,
+    is_fallback: true
+  };
+};
+
 app.post('/api/churn/predict', authMiddleware, async (req, res) => {
   try {
     const { name } = req.body;
@@ -405,13 +433,34 @@ app.post('/api/churn/predict', authMiddleware, async (req, res) => {
 
     console.log(`Predicting churn for: ${name}`);
 
-    // Search by name (case-insensitive regex)
+    // 1. Search by name (case-insensitive regex with trimming)
+    const trimmedName = name.trim();
     let churnData = await Churn.findOne({ 
-        name: { $regex: new RegExp('^' + name + '$', 'i') } 
+        name: { $regex: new RegExp('^' + trimmedName + '$', 'i') } 
     }).lean();
     
+    // 2. Fallback: If not found by name, try finding their booking and then search by phone
     if (!churnData) {
-        console.log(`Data not found for: ${name}`);
+        console.log(`Data not found by name for: ${name}. Trying phone fallback...`);
+        const recentBooking = await Booking.findOne({ 
+            customerName: { $regex: new RegExp('^' + trimmedName + '$', 'i') } 
+        }).sort({ createdAt: -1 }).lean();
+
+        if (recentBooking && recentBooking.phone) {
+            const cleanPhone = recentBooking.phone.replace(/\D/g, '');
+            const last10 = cleanPhone.slice(-10);
+            churnData = await Churn.findOne({
+              $or: [
+                { phone: recentBooking.phone },
+                { phone: cleanPhone },
+                { phone: { $regex: last10 + '$' } }
+              ]
+            }).lean();
+        }
+    }
+
+    if (!churnData) {
+        console.log(`Data still not found for: ${name}`);
         return res.json({ error: `Data Not Found: No metrics available for '${name}' in the database.` });
     }
 
@@ -426,22 +475,21 @@ app.post('/api/churn/predict', authMiddleware, async (req, res) => {
       membership_duration_months: churnData.membership_duration_months || 0,
       loyalty_member: churnData.loyalty_member || 0,
       total_visits: churnData.total_visits || 1,
+      days_since_last_visit: churnData.days_since_last_visit || 0,
+      avg_visit_gap_days: churnData.avg_visit_gap_days || 0,
       num_services_used: churnData.num_services_used || 1,
       has_preferred_employee: churnData.has_preferred_employee || 0,
       employee_change_count: churnData.employee_change_count || 0,
       avg_spend_per_visit: churnData.avg_spend_per_visit || 0,
-      avg_rating: churnData.avg_rating || 3.5,
-      num_complaints: churnData.num_complaints || 0,
-      feedback_given: churnData.feedback_given || 0,
-      offers_redeemed: churnData.offers_redeemed || 0,
-      referrals_made: churnData.referrals_made || 0,
-      sms_response_rate: churnData.sms_response_rate || 0,
-      products_purchased: churnData.products_purchased || 0,
+      last_visit_spend: churnData.last_visit_spend || 0,
+      total_spend: churnData.total_spend || 0,
+      rating: churnData.avg_rating || 3.5,
       appointments_cancelled: churnData.appointments_cancelled || 0,
       appointments_no_show: churnData.appointments_no_show || 0,
       avg_advance_booking_days: churnData.avg_advance_booking_days || 0,
       booking_source: churnData.booking_source || 'Online_App',
       visit_time_preference: churnData.visit_time_preference || 'No_Preference',
+      preferred_service: churnData.preferred_service || 'Unknown',
       churn_risk_category: churnData.churn_risk_category || 'Medium',
     };
 
@@ -518,6 +566,7 @@ app.get('/api/advanced-analytics', authMiddleware, (req, res) => {
 });
 
 // ─── MONGO ANALYTICS DASHBOARD ────────────────────────────────────────────────
+// ─── MONGO ANALYTICS DASHBOARD ────────────────────────────────────────────────
 app.get('/api/mongo-analytics', authMiddleware, async (req, res) => {
   try {
     const [bookings, churns, inventory] = await Promise.all([
@@ -539,66 +588,79 @@ app.get('/api/mongo-analytics', authMiddleware, async (req, res) => {
     const enriched = bookings.map(b => {
       const key = b.phone?.replace(/\D/g,'').slice(-10) || '';
       const c   = churnByPhone[key];
-      return { ...b, spend: c?.last_visit_spend || c?.avg_spend_per_visit || 500 };
+      return { 
+        ...b, 
+        spend: c?.last_visit_spend || c?.avg_spend_per_visit || 500,
+        age: c?.age || 25,
+        gender: c?.gender || 'Female',
+        city: c?.city || 'Nagpur',
+        total_visits: c?.total_visits || 1,
+        days_since_last_visit: c?.days_since_last_visit || 0,
+        avg_visit_gap_days: c?.avg_visit_gap_days || 30,
+        has_preferred_employee: c?.has_preferred_employee || 0,
+        avg_spend_per_visit: c?.avg_spend_per_visit || 500,
+        avg_rating: c?.avg_rating || 3.5,
+        appointments_cancelled: c?.appointments_cancelled || 0,
+        booking_source: c?.booking_source || 'Online_App'
+      };
     });
+    
+    // ── Calculate Total Revenue (Global) ──
+    const totalRevenue = enriched.reduce((s, b) => s + (b.spend || 0), 0);
 
-    // ── Total Revenue ──
-    const totalRevenue = enriched.reduce((s, b) => s + b.spend, 0);
-
-    // ── Revenue by Day (last 7 days) ──
     const now = new Date();
+
+    // ── Revenue by Day (last 7 days including today) ──
     const revenueByDay = Array.from({length: 7}, (_, i) => {
-      const d = new Date(now); d.setDate(d.getDate() - (6 - i));
+      const d = new Date(now);
+      d.setDate(d.getDate() - (6 - i));
       const label = d.toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short' });
       const total = enriched
-        .filter(b => new Date(b.createdAt).toDateString() === d.toDateString())
+        .filter(b => {
+            const bDate = new Date(b.createdAt);
+            return bDate.getDate() === d.getDate() && 
+                   bDate.getMonth() === d.getMonth() && 
+                   bDate.getFullYear() === d.getFullYear();
+        })
         .reduce((s, b) => s + b.spend, 0);
       return { label, revenue: Math.round(total) };
     });
 
     // ── Revenue by Week (last 8 weeks) ──
     const revenueByWeek = Array.from({length: 8}, (_, i) => {
-      const start = new Date(now); start.setDate(start.getDate() - (7 * (7 - i)));
-      const end   = new Date(start); end.setDate(end.getDate() + 7);
+      const start = new Date(now);
+      start.setDate(now.getDate() - (7 * (7 - i)));
+      start.setHours(0,0,0,0);
+      const end = new Date(start);
+      end.setDate(start.getDate() + 7);
+      
       const total = enriched
-        .filter(b => { const d = new Date(b.createdAt); return d >= start && d < end; })
+        .filter(b => {
+          const d = new Date(b.createdAt);
+          return d >= start && d < end;
+        })
         .reduce((s, b) => s + b.spend, 0);
       return {
-        label: `W${i + 1} ${start.toLocaleDateString('en-IN', { day:'numeric', month:'short' })}`,
+        label: `W${i + 1} (${start.getDate()}/${start.getMonth()+1})`,
         revenue: Math.round(total)
       };
     });
 
-    // ── Revenue by Month (12 months) ──
+    // ── Revenue by Month (Jan to current) ──
     const revenueByMonth = monthNames.map((m, idx) => {
       const total = enriched
         .filter(b => new Date(b.createdAt).getMonth() === idx)
         .reduce((s, b) => s + b.spend, 0);
-      return { month: m, revenue: Math.round(total) };
+      return { month: m, revenue: Math.round(total), label: m };
     });
-
-    // ── Visits by Month ──
-    const visitsByMonth = monthNames.map((m, idx) => ({
-      month: m,
-      visits: bookings.filter(b => new Date(b.createdAt).getMonth() === idx).length
-    }));
-
-    // ── Visits by Day of week (all time) ──
-    const visitsByDow = dayNames.map((d, i) => ({
-      day: d,
-      visits: bookings.filter(b => new Date(b.createdAt).getDay() === i).length
-    }));
 
     // ── Service Performance ──
     const svcMap = {};
-    for (const b of bookings) {
-      const svc = (b.service || 'Unknown').split(' ')[0]; // strip "Basic/Expert"
-      if (!svcMap[svc]) svcMap[svc] = { bookings: 0, revenue: 0 };
-      svcMap[svc].bookings++;
-    }
     for (const b of enriched) {
       const svc = (b.service || 'Unknown').split(' ')[0];
-      if (svcMap[svc]) svcMap[svc].revenue += b.spend;
+      if (!svcMap[svc]) svcMap[svc] = { bookings: 0, revenue: 0 };
+      svcMap[svc].bookings++;
+      svcMap[svc].revenue += b.spend;
     }
     const servicePerformance = Object.entries(svcMap)
       .map(([name, v]) => ({ name, bookings: v.bookings, revenue: Math.round(v.revenue) }))
@@ -613,25 +675,6 @@ app.get('/api/mongo-analytics', authMiddleware, async (req, res) => {
     }
     const churnRisk = Object.entries(riskMap).map(([risk, count]) => ({ risk, count }));
 
-    // ── Top Customers by Total Spend ──
-    const topCustomers = [...churns]
-      .sort((a, b) => (b.total_spend || 0) - (a.total_spend || 0))
-      .slice(0, 8)
-      .map(c => ({ name: c.name.split(' ')[0], totalSpend: Math.round(c.total_spend || 0) }));
-
-    // ── Avg Rating by Service (from churn.avg_rating) ──
-    const ratingByCity = {};
-    for (const c of churns) {
-      if (!c.city) continue;
-      if (!ratingByCity[c.city]) ratingByCity[c.city] = { total: 0, count: 0 };
-      ratingByCity[c.city].total += c.avg_rating || 0;
-      ratingByCity[c.city].count++;
-    }
-    const cityRatings = Object.entries(ratingByCity)
-      .map(([city, v]) => ({ city, avgRating: parseFloat((v.total / v.count).toFixed(2)) }))
-      .sort((a, b) => b.avgRating - a.avgRating)
-      .slice(0, 8);
-
     // ── Booking Source Breakdown ──
     const sourceMap = {};
     for (const c of churns) {
@@ -642,21 +685,72 @@ app.get('/api/mongo-analytics', authMiddleware, async (req, res) => {
       .map(([source, count]) => ({ source, count }))
       .sort((a, b) => b.count - a.count);
 
+    // ── 🔮 DEMAND FORECASTING (XGBoost Integration) ──
+    let demandForecast = { distribution: { Low: 0, Medium: 0, High: 0 }, summary: { 'High%': 0, 'Medium%': 0, 'Low%': 0 }, dominant_demand: 'Unknown' };
+    try {
+        const mlPayload = enriched.slice(0, 50).map(b => ({
+            age: b.age,
+            gender: b.gender,
+            city: b.city,
+            total_visits: b.total_visits,
+            days_since_last_visit: b.days_since_last_visit,
+            avg_visit_gap_days: b.avg_visit_gap_days,
+            has_preferred_employee: b.has_preferred_employee,
+            avg_spend_per_visit: b.avg_spend_per_visit,
+            last_visit_spend: b.spend,
+            total_spend: b.total_spend || b.spend * b.total_visits,
+            avg_rating: b.avg_rating,
+            appointments_cancelled: b.appointments_cancelled,
+            booking_source: b.booking_source,
+            preferred_service: b.service.split(' ')[0]
+        }));
+
+        const mlRes = await fetch('http://localhost:5005/predict-demand', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(mlPayload)
+        });
+        if (mlRes.ok) {
+            demandForecast = await mlRes.json();
+            
+            // Add forecasted points to charts
+            const multiplier = demandForecast.dominant_demand === 'High' ? 1.4 : demandForecast.dominant_demand === 'Medium' ? 1.1 : 0.9;
+            
+            // Tomorrow
+            const lastDayRev = revenueByDay[revenueByDay.length-1].revenue;
+            revenueByDay.push({ label: 'Tomorrow (P)', revenue: Math.round(lastDayRev * multiplier), isPredicted: true });
+            
+            // Next Month (Current + 1)
+            const currMonthIdx = now.getMonth();
+            const nextMonthName = monthNames[(currMonthIdx + 1) % 12];
+            const lastMonthRev = revenueByMonth[currMonthIdx].revenue || (totalRevenue / 12);
+            revenueByMonth.push({ month: nextMonthName, revenue: Math.round(lastMonthRev * multiplier), label: `${nextMonthName} (P)`, isPredicted: true });
+        }
+    } catch(e) { console.error('Demand forecast error:', e.message); }
+
     res.json({
       totalRevenue: Math.round(totalRevenue),
       totalBookings: bookings.length,
-      totalCustomers: churns.length,
       revenueByDay,
       revenueByWeek,
       revenueByMonth,
-      visitsByMonth,
-      visitsByDow,
+      visitsByMonth: monthNames.map((m, idx) => ({
+        month: m,
+        visits: bookings.filter(b => new Date(b.createdAt).getMonth() === idx).length
+      })),
+      visitsByDow: dayNames.map((d, i) => ({
+        day: d,
+        visits: bookings.filter(b => new Date(b.createdAt).getDay() === i).length
+      })),
       servicePerformance,
       churnRisk,
       inventory,
-      topCustomers,
-      cityRatings,
+      topCustomers: [...churns]
+        .sort((a, b) => (b.total_spend || 0) - (a.total_spend || 0))
+        .slice(0, 8)
+        .map(c => ({ name: c.name.split(' ')[0], totalSpend: Math.round(c.total_spend || 0) })),
       bookingSource,
+      demandForecast
     });
   } catch (err) {
     console.error('Analytics error:', err);

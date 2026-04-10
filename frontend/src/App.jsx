@@ -1,6 +1,7 @@
 import { Routes, Route } from 'react-router-dom';
 import Customer from './pages/Customer';
 import Admin from './pages/Admin';
+import AdvancedAnalytics from './pages/AdvancedAnalytics';
 import AdminAuth from './pages/AdminAuth';
 
 function App() {
@@ -15,6 +16,7 @@ function App() {
           <Route path="/admin" element={<Admin />} />
           <Route path="/admin/login" element={<AdminAuth mode="login" />} />
           <Route path="/admin/register" element={<AdminAuth mode="register" />} />
+          <Route path="/admin/advanced-analytics" element={<AdvancedAnalytics />} />
         </Routes>
       </main>
 

@@ -123,9 +123,17 @@ export default function Admin() {
           <h2 className="text-3xl font-light tracking-tight text-gray-900 uppercase">Admin <span className="font-black">Dashboard</span></h2>
           <p className="text-gray-400 text-xs uppercase tracking-[0.2em] mt-2">AutoSalon Control Center</p>
         </div>
-        <button onClick={handleLogout} className="px-6 py-2 rounded-full border border-gray-100 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:bg-rose-50 hover:text-rose-500 hover:border-rose-100 transition-all">
-          Sign Out
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => navigate('/admin/advanced-analytics')}
+            className="px-6 py-2 rounded-full border border-purple-100 text-[10px] font-black uppercase tracking-widest text-purple-400 hover:bg-purple-50 hover:text-purple-600 hover:border-purple-200 transition-all"
+          >
+            📊 Advanced Analytics
+          </button>
+          <button onClick={handleLogout} className="px-6 py-2 rounded-full border border-gray-100 text-[10px] font-black uppercase tracking-widest text-gray-400 hover:bg-rose-50 hover:text-rose-500 hover:border-rose-100 transition-all">
+            Sign Out
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">

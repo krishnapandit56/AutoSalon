@@ -1,4 +1,12 @@
 import express from 'express';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import csvParser from 'csv-parser';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
 import mongoose from 'mongoose';
 import cors from 'cors';
 import cron from 'node-cron';
@@ -453,6 +461,206 @@ app.post('/api/churn/predict', authMiddleware, async (req, res) => {
   } catch (error) {
     console.error('Prediction Error:', error.message);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// ─── ADVANCED ANALYTICS: Realistic Dataset ────────────────────────────────────
+app.get('/api/advanced-analytics', authMiddleware, (req, res) => {
+  const csvPath = path.resolve(__dirname, '../realistic_customer_dataset_8000.csv');
+
+  if (!fs.existsSync(csvPath)) {
+    return res.status(404).json({ error: 'Dataset CSV not found at: ' + csvPath });
+  }
+
+  const dayNames   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+  const dayRevenue   = Object.fromEntries(dayNames.map(d => [d, 0]));
+  const monthRevenue = Object.fromEntries(monthNames.map(m => [m, 0]));
+  const qRevenue     = { Q1: 0, Q2: 0, Q3: 0, Q4: 0 };
+
+  const rows = [];
+  fs.createReadStream(csvPath)
+    .pipe(csvParser())
+    .on('data', row => rows.push(row))
+    .on('end', () => {
+      const today = new Date();
+      for (const r of rows) {
+        const totalVisits   = parseInt(r.total_visits)         || 1;
+        const avgGapDays    = parseFloat(r.avg_visit_gap_days) || 30;
+        const daysSinceLast = parseInt(r.days_since_last_visit) || 0;
+        const spendPerVisit = parseFloat(r.avg_spend_per_visit) || 0;
+
+        let visitDate = new Date(today);
+        visitDate.setDate(visitDate.getDate() - daysSinceLast);
+
+        for (let v = 0; v < totalVisits; v++) {
+          const d  = new Date(visitDate);
+          const dow = dayNames[d.getDay()];
+          const mon = monthNames[d.getMonth()];
+          const mo  = d.getMonth() + 1;
+          const q   = mo <= 3 ? 'Q1' : mo <= 6 ? 'Q2' : mo <= 9 ? 'Q3' : 'Q4';
+          dayRevenue[dow]   += spendPerVisit;
+          monthRevenue[mon] += spendPerVisit;
+          qRevenue[q]       += spendPerVisit;
+          visitDate.setDate(visitDate.getDate() - Math.round(avgGapDays));
+        }
+      }
+      const r2 = v => Math.round(v * 100) / 100;
+      const byDay     = dayNames.map(d => ({ day: d, revenue: r2(dayRevenue[d]) }));
+      const byMonth   = monthNames.map(m => ({ month: m, revenue: r2(monthRevenue[m]) }));
+      const byQuarter = Object.entries(qRevenue).map(([q, revenue]) => ({ quarter: q, revenue: r2(revenue) }));
+      const peakDay   = byDay.reduce((a, b) => a.revenue > b.revenue ? a : b).day;
+      const lowestDay = byDay.reduce((a, b) => a.revenue < b.revenue ? a : b).day;
+      res.json({ byDay, byMonth, byQuarter, peakDay, lowestDay });
+    })
+    .on('error', err => res.status(500).json({ error: err.message }));
+});
+
+// ─── MONGO ANALYTICS DASHBOARD ────────────────────────────────────────────────
+app.get('/api/mongo-analytics', authMiddleware, async (req, res) => {
+  try {
+    const [bookings, churns, inventory] = await Promise.all([
+      Booking.find().lean(),
+      Churn.find().lean(),
+      Inventory.find().lean(),
+    ]);
+
+    const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const dayNames   = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+    // ── Revenue helpers (use churn.avg_spend_per_visit as proxy per booking) ──
+    const churnByPhone = {};
+    for (const c of churns) {
+      const key = c.phone?.replace(/\D/g,'').slice(-10);
+      if (key) churnByPhone[key] = c;
+    }
+
+    const enriched = bookings.map(b => {
+      const key = b.phone?.replace(/\D/g,'').slice(-10) || '';
+      const c   = churnByPhone[key];
+      return { ...b, spend: c?.last_visit_spend || c?.avg_spend_per_visit || 500 };
+    });
+
+    // ── Total Revenue ──
+    const totalRevenue = enriched.reduce((s, b) => s + b.spend, 0);
+
+    // ── Revenue by Day (last 7 days) ──
+    const now = new Date();
+    const revenueByDay = Array.from({length: 7}, (_, i) => {
+      const d = new Date(now); d.setDate(d.getDate() - (6 - i));
+      const label = d.toLocaleDateString('en-IN', { weekday:'short', day:'numeric', month:'short' });
+      const total = enriched
+        .filter(b => new Date(b.createdAt).toDateString() === d.toDateString())
+        .reduce((s, b) => s + b.spend, 0);
+      return { label, revenue: Math.round(total) };
+    });
+
+    // ── Revenue by Week (last 8 weeks) ──
+    const revenueByWeek = Array.from({length: 8}, (_, i) => {
+      const start = new Date(now); start.setDate(start.getDate() - (7 * (7 - i)));
+      const end   = new Date(start); end.setDate(end.getDate() + 7);
+      const total = enriched
+        .filter(b => { const d = new Date(b.createdAt); return d >= start && d < end; })
+        .reduce((s, b) => s + b.spend, 0);
+      return {
+        label: `W${i + 1} ${start.toLocaleDateString('en-IN', { day:'numeric', month:'short' })}`,
+        revenue: Math.round(total)
+      };
+    });
+
+    // ── Revenue by Month (12 months) ──
+    const revenueByMonth = monthNames.map((m, idx) => {
+      const total = enriched
+        .filter(b => new Date(b.createdAt).getMonth() === idx)
+        .reduce((s, b) => s + b.spend, 0);
+      return { month: m, revenue: Math.round(total) };
+    });
+
+    // ── Visits by Month ──
+    const visitsByMonth = monthNames.map((m, idx) => ({
+      month: m,
+      visits: bookings.filter(b => new Date(b.createdAt).getMonth() === idx).length
+    }));
+
+    // ── Visits by Day of week (all time) ──
+    const visitsByDow = dayNames.map((d, i) => ({
+      day: d,
+      visits: bookings.filter(b => new Date(b.createdAt).getDay() === i).length
+    }));
+
+    // ── Service Performance ──
+    const svcMap = {};
+    for (const b of bookings) {
+      const svc = (b.service || 'Unknown').split(' ')[0]; // strip "Basic/Expert"
+      if (!svcMap[svc]) svcMap[svc] = { bookings: 0, revenue: 0 };
+      svcMap[svc].bookings++;
+    }
+    for (const b of enriched) {
+      const svc = (b.service || 'Unknown').split(' ')[0];
+      if (svcMap[svc]) svcMap[svc].revenue += b.spend;
+    }
+    const servicePerformance = Object.entries(svcMap)
+      .map(([name, v]) => ({ name, bookings: v.bookings, revenue: Math.round(v.revenue) }))
+      .sort((a, b) => b.bookings - a.bookings);
+
+    // ── Churn Risk Distribution ──
+    const riskMap = { Low: 0, 'Low-Medium': 0, Medium: 0, High: 0 };
+    for (const c of churns) {
+      const r = c.churn_risk_category || 'Medium';
+      if (riskMap[r] !== undefined) riskMap[r]++;
+      else riskMap['Medium']++;
+    }
+    const churnRisk = Object.entries(riskMap).map(([risk, count]) => ({ risk, count }));
+
+    // ── Top Customers by Total Spend ──
+    const topCustomers = [...churns]
+      .sort((a, b) => (b.total_spend || 0) - (a.total_spend || 0))
+      .slice(0, 8)
+      .map(c => ({ name: c.name.split(' ')[0], totalSpend: Math.round(c.total_spend || 0) }));
+
+    // ── Avg Rating by Service (from churn.avg_rating) ──
+    const ratingByCity = {};
+    for (const c of churns) {
+      if (!c.city) continue;
+      if (!ratingByCity[c.city]) ratingByCity[c.city] = { total: 0, count: 0 };
+      ratingByCity[c.city].total += c.avg_rating || 0;
+      ratingByCity[c.city].count++;
+    }
+    const cityRatings = Object.entries(ratingByCity)
+      .map(([city, v]) => ({ city, avgRating: parseFloat((v.total / v.count).toFixed(2)) }))
+      .sort((a, b) => b.avgRating - a.avgRating)
+      .slice(0, 8);
+
+    // ── Booking Source Breakdown ──
+    const sourceMap = {};
+    for (const c of churns) {
+      const src = c.booking_source || 'Unknown';
+      sourceMap[src] = (sourceMap[src] || 0) + 1;
+    }
+    const bookingSource = Object.entries(sourceMap)
+      .map(([source, count]) => ({ source, count }))
+      .sort((a, b) => b.count - a.count);
+
+    res.json({
+      totalRevenue: Math.round(totalRevenue),
+      totalBookings: bookings.length,
+      totalCustomers: churns.length,
+      revenueByDay,
+      revenueByWeek,
+      revenueByMonth,
+      visitsByMonth,
+      visitsByDow,
+      servicePerformance,
+      churnRisk,
+      inventory,
+      topCustomers,
+      cityRatings,
+      bookingSource,
+    });
+  } catch (err) {
+    console.error('Analytics error:', err);
+    res.status(500).json({ error: err.message });
   }
 });
 

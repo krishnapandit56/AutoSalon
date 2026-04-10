@@ -2,4 +2,6 @@ flask
 flask-cors
 pandas
 scikit-learn
-xgboost
+catboost
+pymongo[srv]
+numpy

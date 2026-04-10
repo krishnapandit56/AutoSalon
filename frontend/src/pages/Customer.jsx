@@ -52,8 +52,10 @@ export default function Customer() {
     let timer;
     if (selectedSlot && timeLeft > 0) {
       timer = setInterval(() => setTimeLeft(prev => prev - 1), 1000);
-    } else if (timeLeft === 0) {
+    } else if (selectedSlot && timeLeft === 0) {
+      // Only reset when a slot was actively held and the timer expired
       setSelectedSlot(null);
+      setStatusMsg('Your hold has expired. Please select a slot again.');
     }
     return () => clearInterval(timer);
   }, [selectedSlot, timeLeft]);

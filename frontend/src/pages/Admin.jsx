@@ -80,22 +80,22 @@ export default function Admin() {
     fetchInventory();
   };
 
-  const handlePredictChurn = async (phone) => {
+  const handlePredictChurn = async (name) => {
     try {
-      setChurnPredictions(prev => ({...prev, [phone]: 'loading'}));
+      setChurnPredictions(prev => ({...prev, [name]: 'loading'}));
       const res = await fetch('http://localhost:5000/api/churn/predict', {
         method: 'POST',
         headers: getHeaders(),
-        body: JSON.stringify({ phone })
+        body: JSON.stringify({ name })
       });
       const data = await res.json();
       if (res.ok) {
-        setChurnPredictions(prev => ({...prev, [phone]: data}));
+        setChurnPredictions(prev => ({...prev, [name]: data}));
       } else {
-        setChurnPredictions(prev => ({...prev, [phone]: { error: data.error }}));
+        setChurnPredictions(prev => ({...prev, [name]: { error: data.error }}));
       }
     } catch(err) {
-      setChurnPredictions(prev => ({...prev, [phone]: { error: err.message }}));
+      setChurnPredictions(prev => ({...prev, [name]: { error: err.message }}));
     }
   };
 
@@ -176,23 +176,25 @@ export default function Admin() {
                               </td>
                               <td className="py-6 px-2 text-right">
                                 <div className="flex justify-end items-center gap-3">
-                                  {churnPredictions[b.phone] === 'loading' ? (
+                                  {churnPredictions[b.customerName] === 'loading' ? (
                                     <span className="text-[10px] font-bold text-indigo-400 animate-pulse uppercase tracking-widest">Analysing...</span>
-                                  ) : churnPredictions[b.phone] && !churnPredictions[b.phone].error ? (
+                                  ) : churnPredictions[b.customerName] && !churnPredictions[b.customerName].error ? (
                                     <div className={`px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest border transition-all ${
-                                      churnPredictions[b.phone].churn == 1 
+                                      churnPredictions[b.customerName].risk_level === 'High Risk' 
                                         ? 'bg-rose-50 text-rose-500 border-rose-100 shadow-[0_5px_15px_rgba(244,63,94,0.1)]' 
-                                        : 'bg-emerald-50 text-emerald-500 border-emerald-100 shadow-[0_5px_15px_rgba(16,185,129,0.1)]'
+                                        : churnPredictions[b.customerName].risk_level === 'Medium'
+                                          ? 'bg-amber-50 text-amber-500 border-amber-100 shadow-[0_5px_15px_rgba(245,158,11,0.1)]'
+                                          : 'bg-emerald-50 text-emerald-500 border-emerald-100 shadow-[0_5px_15px_rgba(16,185,129,0.1)]'
                                     }`}>
-                                      {churnPredictions[b.phone].churn == 1 ? 'Churn Risk' : 'Loyal'} 
-                                      <span className="ml-2 opacity-50">{Math.round(churnPredictions[b.phone].churn_risk)}%</span>
+                                      {churnPredictions[b.customerName].risk_level} 
+                                      <span className="ml-2 opacity-50">{Math.round(churnPredictions[b.customerName].churn_risk)}%</span>
                                     </div>
                                   ) : (
                                     <button 
-                                      onClick={() => handlePredictChurn(b.phone)}
+                                      onClick={() => handlePredictChurn(b.customerName)}
                                       className="text-[10px] font-black uppercase tracking-widest text-gray-400 hover:text-indigo-500 transition-colors"
                                     >
-                                      {churnPredictions[b.phone]?.error ? 'Retry Prediction' : 'Predict Churn'}
+                                      {churnPredictions[b.customerName]?.error ? 'Retry Prediction' : 'Predict Churn'}
                                     </button>
                                   )}
                                 </div>

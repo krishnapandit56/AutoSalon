@@ -175,8 +175,29 @@ app.post('/api/confirm-booking', async (req, res) => {
     if (service.includes('Intermediate')) last_visit_spend = 800;
     else if (service.includes('Expert')) last_visit_spend = 1500;
 
-    // Process Churn Data (Sync with prediction model)
-    let churnData = await Churn.findOne({ phone });
+    // Determine visit time preference from slot time
+    let visit_time_preference = 'No_Preference';
+    try {
+      const timeStr = slot.time.toLowerCase();
+      const isPm = timeStr.includes('pm');
+      const hour = parseInt(timeStr);
+      if (!isPm || hour === 12) visit_time_preference = 'Morning';
+      else if (hour >= 1 && hour < 4) visit_time_preference = 'Afternoon';
+      else if (hour >= 4 && hour < 7) visit_time_preference = 'Evening';
+      else visit_time_preference = 'Evening';
+    } catch(e) {}
+
+    // Normalize phone for lookup
+    const cleanPhone = phone.replace(/\D/g, '');
+    const last10 = cleanPhone.slice(-10);
+    
+    let churnData = await Churn.findOne({
+      $or: [
+        { phone: phone },
+        { phone: cleanPhone },
+        { phone: { $regex: last10 + '$' } }
+      ]
+    });
     const now = new Date();
 
     if (churnData) {
@@ -189,22 +210,44 @@ app.post('/api/confirm-booking', async (req, res) => {
       churnData.avg_spend_per_visit = churnData.total_spend / churnData.total_visits;
       churnData.last_visit_spend = last_visit_spend;
       churnData.date = now;
+      churnData.visit_time_preference = visit_time_preference;
       if (age) churnData.age = age;
       if (gender) churnData.gender = gender;
       if (city) churnData.city = city;
       await churnData.save();
     } else {
+      // Create a new churn record with ALL fields the ML model needs
       churnData = new Churn({
         name: customerName,
         phone,
         age: age || 25,
         gender: gender || 'Female',
-        city: city || 'nagpur',
+        city: city || 'Nagpur',
+        membership_type: 'None',
+        membership_duration_months: 0,
+        loyalty_member: 0,
         total_visits: 1,
-        total_spend: last_visit_spend,
+        days_since_last_visit: 0,
+        avg_visit_gap_days: 0,
+        num_services_used: 1,
+        has_preferred_employee: 0,
+        employee_change_count: 0,
         avg_spend_per_visit: last_visit_spend,
         last_visit_spend: last_visit_spend,
-        booking_source: 'web'
+        total_spend: last_visit_spend,
+        avg_rating: 3.5,
+        num_complaints: 0,
+        feedback_given: 0,
+        offers_redeemed: 0,
+        referrals_made: 0,
+        sms_response_rate: 0,
+        products_purchased: 0,
+        appointments_cancelled: 0,
+        appointments_no_show: 0,
+        avg_advance_booking_days: 0,
+        booking_source: 'Online_App',
+        visit_time_preference: visit_time_preference,
+        churn_risk_category: 'Medium',
       });
       await churnData.save();
     }
@@ -328,31 +371,55 @@ app.get('/api/churn', authMiddleware, async (req, res) => {
 
 app.post('/api/churn/predict', authMiddleware, async (req, res) => {
   try {
-    const { phone } = req.body;
-    if (!phone) return res.status(400).json({ error: 'Phone number is required.' });
+    const { name } = req.body;
+    if (!name) return res.status(400).json({ error: 'Customer name is required.' });
 
-    // Normalize phone numbers for search
-    const cleanPhone = phone.replace(/\D/g, ''); // Remove all non-digits
-    const last10 = cleanPhone.slice(-10);
-    
-    // Try finding by exact phone, or by last 10 digits
+    console.log(`Predicting churn for: ${name}`);
+
+    // Search by name (case-insensitive regex)
     let churnData = await Churn.findOne({ 
-        $or: [
-            { phone: phone },
-            { phone: cleanPhone },
-            { phone: { $regex: last10 + '$' } }
-        ]
+        name: { $regex: new RegExp('^' + name + '$', 'i') } 
     }).lean();
     
     if (!churnData) {
-        // Return 200 with an error so the frontend doesn't see a "failed request"
-        return res.json({ error: 'Data Not Found: No churn metrics available for this customer yet.' });
+        console.log(`Data not found for: ${name}`);
+        return res.json({ error: `Data Not Found: No metrics available for '${name}' in the database.` });
     }
+
+    console.log(`Found data for ${name}. Metrics: visits=${churnData.total_visits}, spend=${churnData.avg_spend_per_visit}`);
+
+    // Build a CLEAN object with ONLY the fields the ML model expects
+    const mlPayload = {
+      age: churnData.age || 25,
+      gender: churnData.gender || 'Female',
+      city: churnData.city || 'Nagpur',
+      membership_type: churnData.membership_type || 'None',
+      membership_duration_months: churnData.membership_duration_months || 0,
+      loyalty_member: churnData.loyalty_member || 0,
+      total_visits: churnData.total_visits || 1,
+      num_services_used: churnData.num_services_used || 1,
+      has_preferred_employee: churnData.has_preferred_employee || 0,
+      employee_change_count: churnData.employee_change_count || 0,
+      avg_spend_per_visit: churnData.avg_spend_per_visit || 0,
+      avg_rating: churnData.avg_rating || 3.5,
+      num_complaints: churnData.num_complaints || 0,
+      feedback_given: churnData.feedback_given || 0,
+      offers_redeemed: churnData.offers_redeemed || 0,
+      referrals_made: churnData.referrals_made || 0,
+      sms_response_rate: churnData.sms_response_rate || 0,
+      products_purchased: churnData.products_purchased || 0,
+      appointments_cancelled: churnData.appointments_cancelled || 0,
+      appointments_no_show: churnData.appointments_no_show || 0,
+      avg_advance_booking_days: churnData.avg_advance_booking_days || 0,
+      booking_source: churnData.booking_source || 'Online_App',
+      visit_time_preference: churnData.visit_time_preference || 'No_Preference',
+      churn_risk_category: churnData.churn_risk_category || 'Medium',
+    };
 
     const response = await fetch('http://localhost:5005/predict', {
        method: 'POST',
        headers: { 'Content-Type': 'application/json' },
-       body: JSON.stringify(churnData)
+       body: JSON.stringify(mlPayload)
     });
     
     if (!response.ok) {

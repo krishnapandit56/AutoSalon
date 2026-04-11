@@ -211,7 +211,7 @@ export default function Customer() {
             <div className="flex items-center justify-between mb-8">
                <div className="flex items-center gap-4">
                 <span className="text-[10px] uppercase tracking-[0.2em] text-rose-300 font-bold px-3 py-1 rounded-full bg-rose-50">Step 03</span>
-                <h2 className="text-xl font-medium tracking-tight">Patient Details</h2>
+                <h2 className="text-xl font-medium tracking-tight">Customer Details</h2>
               </div>
 
             </div>

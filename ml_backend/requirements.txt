@@ -5,3 +5,5 @@ scikit-learn
 catboost
 pymongo[srv]
 numpy
+
+gunicorn==21.2.0

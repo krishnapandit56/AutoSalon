@@ -27,11 +27,11 @@ app.use(express.json());
 
 const twilioClient = twilio('AC5bcbea1a97271175fd382126275a1256', '746d244b6055adbb82cdc1f2b3b7c42c');
 
-import Slot from './models/Slot.js';
-import Booking from './models/Booking.js';
-import Inventory from './models/Inventory.js';
-import Churn from './models/Churn.js';
-import Admin from './models/Admin.js';
+import Slot from './src/models/Slot.js';
+import Booking from './src/models/Booking.js';
+import Inventory from './src/models/Inventory.js';
+import Churn from './src/models/Churn.js';
+import Admin from './src/models/Admin.js';
 
 const JWT_SECRET = 'supersecret_autosalon_key_2026';
 

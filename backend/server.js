@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import express from 'express';
 import fs from 'fs';
 import path from 'path';
@@ -25,7 +26,7 @@ const io = new Server(httpServer, {
 app.use(cors());
 app.use(express.json());
 
-const twilioClient = twilio('AC5bcbea1a97271175fd382126275a1256', '746d244b6055adbb82cdc1f2b3b7c42c');
+const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
 import Slot from './src/models/Slot.js';
 import Booking from './src/models/Booking.js';
@@ -33,7 +34,7 @@ import Inventory from './src/models/Inventory.js';
 import Churn from './src/models/Churn.js';
 import Admin from './src/models/Admin.js';
 
-const JWT_SECRET = 'supersecret_autosalon_key_2026';
+const JWT_SECRET = process.env.JWT_SECRET || 'supersecret_autosalon_key_2026';
 
 // Service Data with 3 levels and price ranges
 const SERVICES = {
@@ -52,7 +53,7 @@ const SERVICES = {
 };
 
 // Connect to MongoDB
-mongoose.connect('mongodb+srv://krishnapandit52005:AutoSalon@autosaloncluster.qetbmgu.mongodb.net/salon_db?appName=AutoSalonCluster')
+mongoose.connect(process.env.MONGO_URI)
   .then(async () => {
     console.log('Connected to MongoDB');
     // Only clear orphaned held slots on startup
@@ -302,7 +303,7 @@ app.post('/api/confirm-booking', async (req, res) => {
         const msg = `Hi ${customerName}! Your AutoSalon appointment for ${service} is confirmed for ${slot.time}.`;
         await twilioClient.messages.create({
             body: msg,
-            from: '+13185343593',
+            from: process.env.TWILIO_PHONE_NUMBER,
             to: formattedPhone
         });
     } catch (smsErr) {
@@ -493,7 +494,7 @@ app.post('/api/churn/predict', authMiddleware, async (req, res) => {
       churn_risk_category: churnData.churn_risk_category || 'Medium',
     };
 
-    const response = await fetch('http://localhost:5005/predict', {
+    const response = await fetch(`${process.env.ML_BACKEND_URL}/predict`, {
        method: 'POST',
        headers: { 'Content-Type': 'application/json' },
        body: JSON.stringify(mlPayload)
@@ -705,7 +706,7 @@ app.get('/api/mongo-analytics', authMiddleware, async (req, res) => {
             preferred_service: b.service.split(' ')[0]
         }));
 
-        const mlRes = await fetch('http://localhost:5005/predict-demand', {
+        const mlRes = await fetch(`${process.env.ML_BACKEND_URL}/predict-demand`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(mlPayload)
@@ -758,5 +759,5 @@ app.get('/api/mongo-analytics', authMiddleware, async (req, res) => {
   }
 });
 
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 httpServer.listen(PORT, () => console.log('Server running on port ' + PORT));

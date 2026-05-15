@@ -8,7 +8,7 @@ import pickle
 import os
 
 # Paths
-dataset_path = "../realistic_customer_dataset_8000.csv"
+dataset_path = "../realistic_customer_dataset_8000_v2.csv"
 model_path = "xgboost_demand_model.pkl"
 encoder_path = "demand_encoders.pkl"
 

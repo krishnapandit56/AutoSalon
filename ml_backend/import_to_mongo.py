@@ -2,82 +2,98 @@ import pandas as pd
 from pymongo import MongoClient
 import numpy as np
 
-# MongoDB Connection String
+# ── Config ──────────────────────────────────────────────────────────────────
 MONGO_URI = "mongodb+srv://krishnapandit52005:AutoSalon@autosaloncluster.qetbmgu.mongodb.net/salon_db?appName=AutoSalonCluster"
-CSV_PATH = "../realistic_customer_dataset_8000.csv"
+CSV_PATH  = "../realistic_customer_dataset_8000_v2.csv"
 
 def import_data():
     try:
-        print("Reading CSV...")
+        print("Reading v2 CSV...")
         df = pd.read_csv(CSV_PATH)
-        print(f"Loaded {len(df)} rows with columns: {list(df.columns)}")
+        print(f"Loaded {len(df)} rows.")
+        print(f"Columns: {list(df.columns)}\n")
 
-        # --- Build the documents to match Churn schema + ML features ---
-
-        # Identity fields
+        # ── Identity fields ──────────────────────────────────────────────────
+        # Use customer_id as the name field (e.g. CUST00001)
         df['name'] = df['customer_id']
+
         # Generate deterministic phone numbers from customer_id index
         df['phone'] = df['customer_id'].apply(
             lambda cid: "+91" + str(int(cid.replace("CUST", ""))).zfill(10)
         )
 
-        # All fields that map directly from CSV to MongoDB (matching ML model features)
+        # ── All fields that map directly from CSV ────────────────────────────
         direct_fields = [
             'age', 'gender', 'city',
             'booking_source',
             'membership_type', 'membership_duration_months', 'loyalty_member',
             'total_visits', 'days_since_last_visit', 'avg_visit_gap_days',
+            'preferred_service',                    # ← new in v2
             'num_services_used', 'has_preferred_employee', 'employee_change_count',
             'avg_spend_per_visit', 'last_visit_spend', 'total_spend',
+            'products_purchased', 'product_spend',
             'avg_rating', 'num_complaints', 'feedback_given',
             'offers_redeemed', 'referrals_made', 'sms_response_rate',
-            'products_purchased',
+            'sms_sent', 'sms_responses',
             'appointments_cancelled', 'appointments_no_show',
             'avg_advance_booking_days',
             'visit_time_preference',
             'churn_risk_category',
+            'churn',
         ]
 
-        # Ensure all expected columns exist with safe defaults
+        # ── Ensure all expected columns exist with safe defaults ─────────────
+        string_cols = ['gender', 'city', 'membership_type', 'booking_source',
+                       'visit_time_preference', 'churn_risk_category', 'preferred_service']
         for col in direct_fields:
             if col not in df.columns:
-                print(f"  WARNING: Column '{col}' not in CSV, filling with default")
-                if col in ['gender', 'city', 'membership_type', 'booking_source',
-                           'visit_time_preference', 'churn_risk_category']:
-                    df[col] = 'Unknown'
-                else:
-                    df[col] = 0
+                print(f"  WARNING: Column '{col}' not in v2 CSV, filling with default")
+                df[col] = 'Unknown' if col in string_cols else 0
 
-        # Fill NaN for membership_type (no membership = "None")
-        df['membership_type'] = df['membership_type'].fillna('None')
+        # ── Normalise string columns ─────────────────────────────────────────
+        df['membership_type']          = df['membership_type'].fillna('None')
         df['membership_duration_months'] = df['membership_duration_months'].fillna(0)
+        df['preferred_service']        = df['preferred_service'].fillna('Unknown')
+        df['churn_risk_category']      = df['churn_risk_category'].fillna('Medium')
+        df['booking_source']           = df['booking_source'].fillna('Walk-in')
+        df['visit_time_preference']    = df['visit_time_preference'].fillna('No_Preference')
 
-        # Build final list of fields for MongoDB
+        # ── Build documents ──────────────────────────────────────────────────
         output_fields = ['name', 'phone', 'customer_id'] + direct_fields
+        # Only use columns that actually exist in df
+        output_fields = [f for f in output_fields if f in df.columns]
         data_to_import = df[output_fields].to_dict('records')
 
-        # Clean NaN values (pymongo doesn't handle numpy NaN well)
+        # Clean NaN / numpy types (pymongo can't handle them)
         for record in data_to_import:
-            for key, value in record.items():
+            for key, value in list(record.items()):
                 if isinstance(value, float) and np.isnan(value):
                     record[key] = 0
+                elif isinstance(value, (np.integer,)):
+                    record[key] = int(value)
+                elif isinstance(value, (np.floating,)):
+                    record[key] = float(value)
 
-        print(f"Connecting to MongoDB...")
-        client = MongoClient(MONGO_URI)
+        # ── Connect & import ─────────────────────────────────────────────────
+        print("Connecting to MongoDB Atlas...")
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=10000)
         db = client.get_database()
-        collection = db['churns']  # Mongoose pluralizes 'Churn' to 'churns'
+        collection = db['churns']
 
-        print("Cleaning existing churn data...")
-        collection.delete_many({})
+        print("Clearing existing churn data...")
+        deleted = collection.delete_many({})
+        print(f"  Deleted {deleted.deleted_count} old records.")
 
-        print(f"Importing {len(data_to_import)} records...")
-        collection.insert_many(data_to_import)
-
-        print(f"Import successful! {len(data_to_import)} records inserted.")
+        print(f"Inserting {len(data_to_import)} v2 records...")
+        result = collection.insert_many(data_to_import)
+        print(f"\n✅ Import successful! {len(result.inserted_ids)} records inserted.")
         print(f"Sample record keys: {list(data_to_import[0].keys())}")
+        print(f"Sample record: {data_to_import[0]}")
+
+        client.close()
 
     except Exception as e:
-        print(f"Error during import: {e}")
+        print(f"❌ Error during import: {e}")
         import traceback
         traceback.print_exc()
 

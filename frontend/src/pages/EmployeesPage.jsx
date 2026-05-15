@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion } from 'framer-motion';
 import {
   UserCog, Star, TrendingUp, Clock, Award, BarChart3,
@@ -29,6 +30,16 @@ const gradientAvatars = [
 
 export default function EmployeesPage() {
   const [selectedEmployee, setSelectedEmployee] = useState(null);
+  const [searchParams] = useSearchParams();
+  const globalSearch = (searchParams.get('q') || '').toLowerCase();
+
+  const displayEmployees = globalSearch
+    ? DEMO_EMPLOYEES.filter(e =>
+        e.name.toLowerCase().includes(globalSearch) ||
+        e.role.toLowerCase().includes(globalSearch) ||
+        e.skills.some(s => s.toLowerCase().includes(globalSearch))
+      )
+    : DEMO_EMPLOYEES;
 
   const totalBookings = DEMO_EMPLOYEES.reduce((s, e) => s + e.bookings, 0);
   const totalRevenue = DEMO_EMPLOYEES.reduce((s, e) => s + e.revenue, 0);
@@ -58,7 +69,7 @@ export default function EmployeesPage() {
 
       {/* Employee Cards */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {DEMO_EMPLOYEES.map((emp, i) => (
+        {displayEmployees.map((emp, i) => (
           <motion.div
             key={emp.id}
             initial={{ opacity: 0, y: 20 }}

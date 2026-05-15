@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Calendar, Clock, ChevronLeft, ChevronRight,
@@ -38,7 +39,8 @@ export default function AppointmentsPage() {
         body: JSON.stringify({ name }),
       });
       const data = await res.json();
-      setChurnPredictions(prev => ({ ...prev, [name]: res.ok ? data : { error: data.error } }));
+      // Store result — could be: prediction result, no_data, or error
+      setChurnPredictions(prev => ({ ...prev, [name]: data }));
     } catch (err) {
       setChurnPredictions(prev => ({ ...prev, [name]: { error: err.message } }));
     }
@@ -58,9 +60,20 @@ export default function AppointmentsPage() {
 
   // Bookings shown in right panel:
   // If a day is selected → show only that day; else show all grouped by date
-  const panelBookings = selectedDay
+  const [searchParams] = useSearchParams();
+  const globalSearch = (searchParams.get('q') || '').toLowerCase();
+
+  const panelBookings = (selectedDay
     ? getBookingsForDay(selectedDay)
-    : bookings;
+    : bookings
+  ).filter(b => {
+    if (!globalSearch) return true;
+    return (
+      b.customerName?.toLowerCase().includes(globalSearch) ||
+      b.service?.toLowerCase().includes(globalSearch) ||
+      b.phone?.includes(globalSearch)
+    );
+  });
 
   // Group for right panel
   const grouped = panelBookings.reduce((acc, b) => {
@@ -242,20 +255,40 @@ export default function AppointmentsPage() {
                                 <p className="text-[10px] text-ink-400">{b.service} · <span className="font-mono">{b.phone}</span></p>
                               </div>
                             </div>
-                            <div className="text-right shrink-0 ml-2 flex flex-col items-end gap-1">
+              <div className="text-right shrink-0 ml-2 flex flex-col items-end gap-1">
                               <Badge variant="purple">{b.slotId?.time || 'N/A'}</Badge>
-                              {churnPredictions[b.customerName] === 'loading' ? (
-                                <span className="text-[9px] text-aurora-purple animate-pulse font-bold uppercase tracking-widest">Analysing…</span>
-                              ) : churnPredictions[b.customerName] && !churnPredictions[b.customerName].error ? (
-                                <span className={`text-[9px] font-bold uppercase tracking-widest ${churnPredictions[b.customerName].risk_level === 'High Risk' ? 'text-rose-500' : 'text-emerald-500'}`}>
-                                  {churnPredictions[b.customerName].risk_level}
-                                </span>
-                              ) : (
-                                <button onClick={() => handlePredictChurn(b.customerName)}
-                                  className="text-[9px] font-bold uppercase tracking-widest text-ink-300 hover:text-aurora-purple transition-colors">
-                                  {churnPredictions[b.customerName]?.error ? 'Retry' : 'Predict'}
-                                </button>
-                              )}
+                              {(() => {
+                                const pred = churnPredictions[b.customerName];
+                                if (pred === 'loading') {
+                                  return <span className="text-[9px] text-aurora-purple animate-pulse font-bold uppercase tracking-widest">Analysing…</span>;
+                                }
+                                if (pred?.no_data) {
+                                  // New customer or no historical data
+                                  return <span className="text-[9px] font-bold uppercase tracking-widest text-ink-400 bg-ink-100 px-1.5 py-0.5 rounded">No History</span>;
+                                }
+                                if (pred?.risk_level) {
+                                  // Successful ML prediction
+                                  const riskColor = pred.risk_level === 'High Risk'
+                                    ? 'text-rose-500'
+                                    : pred.risk_level === 'Medium Risk' || pred.risk_level === 'Medium'
+                                    ? 'text-amber-500'
+                                    : 'text-emerald-500';
+                                  return (
+                                    <span className={`text-[9px] font-bold uppercase tracking-widest ${riskColor}`}>
+                                      {pred.risk_level} · {Math.round(pred.churn_risk)}%
+                                    </span>
+                                  );
+                                }
+                                // Default: show Predict button (or Retry on error)
+                                return (
+                                  <button
+                                    onClick={() => handlePredictChurn(b.customerName)}
+                                    className="text-[9px] font-bold uppercase tracking-widest text-ink-300 hover:text-aurora-purple transition-colors"
+                                  >
+                                    {pred?.error ? 'Retry' : 'Predict'}
+                                  </button>
+                                );
+                              })()}
                             </div>
                           </motion.div>
                         ))}

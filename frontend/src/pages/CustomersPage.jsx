@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Users, Shield, AlertTriangle, TrendingUp, UserCheck,
@@ -17,6 +18,8 @@ export default function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState(null);
   const [churnResults, setChurnResults] = useState({});
   const [filter, setFilter] = useState('all');
+  const [searchParams] = useSearchParams();
+  const globalSearch = searchParams.get('q') || '';
 
   useEffect(() => {
     if (!token) { setCustomers(DUMMY_CUSTOMERS); setLoading(false); return; }
@@ -25,7 +28,7 @@ export default function CustomersPage() {
     const ctrl = new AbortController();
     const timeout = setTimeout(() => ctrl.abort(), 4000); // 4s timeout
 
-    fetch('http://localhost:5000/api/churn-data', {
+    fetch('http://localhost:5000/api/churn', {
       headers: { Authorization: `Bearer ${token}` },
       signal: ctrl.signal,
     })
@@ -194,6 +197,7 @@ export default function CustomersPage() {
         data={filteredCustomers}
         searchable
         searchPlaceholder="Search by name, city, service…"
+        externalSearch={globalSearch}
         onRowClick={row => setSelectedCustomer(row)}
         pageSize={12}
         emptyMessage="No customers found"

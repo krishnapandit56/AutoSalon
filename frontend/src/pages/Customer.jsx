@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Scissors, Clock, CheckCircle, AlertCircle } from 'lucide-react';
+import { Scissors, Clock, CheckCircle, AlertCircle, X, MessageSquare } from 'lucide-react';
 import ServiceSelector from '../components/customer/ServiceSelector';
 import SlotPicker from '../components/customer/SlotPicker';
 import BookingDrawer from '../components/customer/BookingDrawer';
@@ -28,6 +28,8 @@ export default function Customer() {
   const [statusMsg, setStatusMsg]   = useState('');
   const [isSuccess, setIsSuccess]   = useState(false);
   const [isLoading, setIsLoading]   = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+  const [bookedDetails, setBookedDetails]       = useState(null);
 
   const activeStep = selectedLevel ? (selectedSlot ? 3 : 2) : 1;
 
@@ -83,9 +85,18 @@ export default function Customer() {
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || data.message);
 
+      // Save details for the success modal BEFORE resetting state
+      setBookedDetails({
+        name,
+        phone,
+        service: selectedService,
+        level: selectedLevel,
+        time: selectedSlot.time,
+      });
+      setShowSuccessModal(true);
+
       setIsSuccess(true);
-      setStatusMsg('Appointment confirmed. Check your phone for SMS confirmation.');
-      setTimeout(() => setStatusMsg(''), 8000);
+      setStatusMsg('');
       setSelectedSlot(null); setSelectedService(''); setSelectedLevel('');
       setName(''); setPhone(''); setAge(''); setCity('');
     } catch (err) {
@@ -97,6 +108,82 @@ export default function Customer() {
 
   return (
     <div className="mesh-bg min-h-screen pb-24 font-sans">
+
+      {/* ══════════════════════════ SUCCESS MODAL ══════════════════════════ */}
+      <AnimatePresence>
+        {showSuccessModal && bookedDetails && (
+          <>
+            {/* Backdrop */}
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="fixed inset-0 bg-ink-900/40 backdrop-blur-sm z-[100]"
+              onClick={() => setShowSuccessModal(false)}
+            />
+            {/* Modal */}
+            <motion.div
+              initial={{ opacity: 0, scale: 0.85, y: 40 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 26 }}
+              className="fixed inset-0 flex items-center justify-center z-[101] pointer-events-none px-4"
+            >
+              <div className="bg-white rounded-3xl shadow-float border border-ink-100 w-full max-w-sm p-8 pointer-events-auto text-center relative">
+                {/* Close */}
+                <button
+                  onClick={() => setShowSuccessModal(false)}
+                  className="absolute top-4 right-4 w-8 h-8 rounded-full flex items-center justify-center text-ink-400 hover:bg-ink-100 transition-all"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+
+                {/* Icon */}
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: 'spring', stiffness: 400, damping: 20, delay: 0.1 }}
+                  className="w-20 h-20 rounded-full bg-emerald-50 border-4 border-emerald-100 flex items-center justify-center mx-auto mb-5"
+                >
+                  <CheckCircle className="w-10 h-10 text-emerald-500" />
+                </motion.div>
+
+                <h2 className="text-2xl font-display font-bold text-ink-900 mb-1">Appointment Confirmed!</h2>
+                <p className="text-sm text-ink-400 mb-6">Your booking has been secured successfully.</p>
+
+                {/* Details */}
+                <div className="bg-surface-2/60 rounded-2xl p-4 space-y-2.5 text-left mb-6">
+                  {[
+                    { label: 'Name',    value: bookedDetails.name },
+                    { label: 'Service', value: `${bookedDetails.service.replace('_', ' ')} · ${bookedDetails.level}` },
+                    { label: 'Time',    value: bookedDetails.time },
+                  ].map(({ label, value }) => (
+                    <div key={label} className="flex items-center justify-between">
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-ink-400">{label}</span>
+                      <span className="text-xs font-semibold text-ink-800">{value}</span>
+                    </div>
+                  ))}
+                </div>
+
+                {/* SMS Note */}
+                <div className="flex items-center gap-2 px-4 py-3 rounded-xl bg-aurora-purple/5 border border-aurora-purple/10 mb-6">
+                  <MessageSquare className="w-4 h-4 text-aurora-purple shrink-0" />
+                  <p className="text-[11px] text-aurora-purple font-medium text-left">
+                    An SMS confirmation has been sent to <span className="font-bold">+91 {bookedDetails.phone}</span>
+                  </p>
+                </div>
+
+                <button
+                  onClick={() => setShowSuccessModal(false)}
+                  className="w-full py-3.5 rounded-xl bg-ink-900 text-white font-semibold text-sm hover:bg-ink-800 transition-all shadow-float"
+                >
+                  Done
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
 
       {/* Top Nav Bar */}
       <header className="sticky top-0 z-50 border-b border-ink-100/60 bg-white/80 backdrop-blur-xl">
@@ -147,22 +234,16 @@ export default function Customer() {
           </h1>
         </motion.div>
 
-        {/* Status Banner */}
+        {/* Error Banner (only for errors) */}
         <AnimatePresence>
-          {statusMsg && (
+          {statusMsg && !isSuccess && (
             <motion.div
               initial={{ opacity: 0, y: -12, height: 0 }}
               animate={{ opacity: 1, y: 0, height: 'auto' }}
               exit={{ opacity: 0, y: -12, height: 0 }}
-              className={`flex items-center gap-3 px-5 py-4 rounded-xl mb-8 text-sm font-medium border ${
-                isSuccess
-                  ? 'bg-emerald-50 border-emerald-100 text-emerald-700'
-                  : 'bg-red-50 border-red-100 text-red-600'
-              }`}
+              className="flex items-center gap-3 px-5 py-4 rounded-xl mb-8 text-sm font-medium border bg-red-50 border-red-100 text-red-600"
             >
-              {isSuccess
-                ? <CheckCircle className="w-4 h-4 shrink-0" />
-                : <AlertCircle className="w-4 h-4 shrink-0" />}
+              <AlertCircle className="w-4 h-4 shrink-0" />
               {statusMsg}
             </motion.div>
           )}

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Package, Plus, AlertTriangle, CheckCircle, Trash2,
@@ -78,6 +79,13 @@ export default function InventoryPage() {
     });
     fetchInventory();
   };
+
+  const [searchParams] = useSearchParams();
+  const globalSearch = (searchParams.get('q') || '').toLowerCase();
+
+  const displayInventory = globalSearch
+    ? inventory.filter(i => i.name?.toLowerCase().includes(globalSearch))
+    : inventory;
 
   const criticalItems = inventory.filter(i => i.quantity < 5);
   const lowItems = inventory.filter(i => i.quantity >= 5 && i.quantity < 15);
@@ -181,7 +189,7 @@ export default function InventoryPage() {
       <GlassCard padding="p-6">
         <h3 className="text-xs font-bold uppercase tracking-widest text-ink-400 mb-5">All Items</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3">
-          {inventory.map((item, i) => (
+          {displayInventory.map((item, i) => (
             <motion.div
               key={item._id}
               initial={{ opacity: 0, y: 12 }}

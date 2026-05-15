@@ -7,14 +7,24 @@ export default function DataTable({
   pageSize = 10,
   searchable = false,
   searchPlaceholder = 'Search…',
+  externalSearch = '',
   onRowClick,
   emptyMessage = 'No data available',
   className = '',
 }) {
-  const [search, setSearch] = useState('');
+  const [search, setSearch] = useState(externalSearch);
   const [sortCol, setSortCol] = useState(null);
   const [sortDir, setSortDir] = useState('asc');
   const [page, setPage] = useState(0);
+
+  // Sync external search (from URL params) into internal state
+  // Using a simple effect so it updates when the URL changes
+  const [prevExternal, setPrevExternal] = useState(externalSearch);
+  if (externalSearch !== prevExternal) {
+    setPrevExternal(externalSearch);
+    setSearch(externalSearch);
+    setPage(0);
+  }
 
   // Filter
   const filtered = searchable && search

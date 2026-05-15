@@ -1,5 +1,6 @@
 import 'dotenv/config';
 import express from 'express';
+import voiceRoutes from './src/voice-ai/voiceRoutes.js';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -25,6 +26,10 @@ const io = new Server(httpServer, {
 
 app.use(cors());
 app.use(express.json());
+app.use(express.urlencoded({ extended: false })); // Required for Twilio POST data
+
+// ─── AI Voice Calling Routes ────────────────────────────────────────────────
+app.use(voiceRoutes);
 
 const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
 
@@ -53,39 +58,50 @@ const SERVICES = {
 };
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGO_URI)
+mongoose.connect(process.env.MONGO_URI, {
+  serverSelectionTimeoutMS: 5000, // Wait only 5s to connect
+  socketTimeoutMS: 45000,         // Close sockets after 45s of inactivity
+})
   .then(async () => {
     console.log('Connected to MongoDB');
-    // Only clear orphaned held slots on startup
-    const oldHeldSlots = await Slot.countDocuments({ status: 'held' });
-    if(oldHeldSlots > 0) {
-        await Slot.updateMany({ status: 'held' }, { $set: { status: 'available', heldBy: null, holdExpiry: null } });
-        console.log(`Startup Cleanup: Freed frozen slots.`);
+    try {
+      // Only clear orphaned held slots on startup
+      const oldHeldSlots = await Slot.countDocuments({ status: 'held' }).maxTimeMS(5000);
+      if(oldHeldSlots > 0) {
+          await Slot.updateMany({ status: 'held' }, { $set: { status: 'available', heldBy: null, holdExpiry: null } });
+          console.log(`Startup Cleanup: Freed frozen slots.`);
+      }
+    } catch (e) {
+      console.warn('Startup cleanup skipped due to timeout/error:', e.message);
     }
   })
   .catch(err => console.error('MongoDB connection error:', err));
 
 // Generate mock slots from 11 AM to 10 PM, 30 min intervals
 const generateMockSlots = async () => {
-  const existingCount = await Slot.countDocuments();
-  if (existingCount > 0) return;
-  
-  await Slot.deleteMany({});
-  const formatTime = (minutes) => {
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    const ampm = h >= 12 && h < 24 ? 'pm' : 'am';
-    let displayH = h % 12;
-    if (displayH === 0) displayH = 12;
-    return m === 0 ? displayH + ampm : displayH + '.' + m + ' ' + ampm;
-  };
+  try {
+    const existingCount = await Slot.countDocuments().maxTimeMS(5000);
+    if (existingCount > 0) return;
+    
+    await Slot.deleteMany({});
+    const formatTime = (minutes) => {
+      const h = Math.floor(minutes / 60);
+      const m = minutes % 60;
+      const ampm = h >= 12 && h < 24 ? 'pm' : 'am';
+      let displayH = h % 12;
+      if (displayH === 0) displayH = 12;
+      return m === 0 ? displayH + ampm : displayH + '.' + m + ' ' + ampm;
+    };
 
-  const slots = [];
-  for (let time = 660; time <= 1320; time += 30) {
-    slots.push({ time: formatTime(time) });
+    const slots = [];
+    for (let time = 660; time <= 1320; time += 30) {
+      slots.push({ time: formatTime(time) });
+    }
+    await Slot.insertMany(slots);
+    console.log('Mock slots generated.');
+  } catch (err) {
+    console.warn('Mock slot generation skipped:', err.message);
   }
-  await Slot.insertMany(slots);
-  console.log('Mock slots generated.');
 };
 generateMockSlots();
 
@@ -236,25 +252,32 @@ app.post('/api/confirm-booking', async (req, res) => {
     const now = new Date();
 
     if (churnData) {
-      const diffTime = Math.abs(now - new Date(churnData.date));
+      // ── Existing customer found by phone → update their record ──
+      const diffTime = Math.abs(now - new Date(churnData.date || now));
       const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      
-      // SYNC NAME: Ensure the churn entry name matches the booking name for easy lookup
+
+      // Update avg_visit_gap_days incrementally
+      const prevGap = churnData.avg_visit_gap_days || 0;
+      const prevVisits = churnData.total_visits || 1;
+      churnData.avg_visit_gap_days = Math.round((prevGap * prevVisits + diffDays) / (prevVisits + 1));
+
+      // SYNC NAME: store booking name so predict-by-name works
       churnData.name = customerName;
-      
+      churnData.phone = phone; // ensure phone is stored
       churnData.days_since_last_visit = diffDays;
       churnData.total_visits += 1;
-      churnData.total_spend += last_visit_spend;
-      churnData.avg_spend_per_visit = churnData.total_spend / churnData.total_visits;
+      churnData.total_spend = (churnData.total_spend || 0) + last_visit_spend;
+      churnData.avg_spend_per_visit = Math.round(churnData.total_spend / churnData.total_visits);
       churnData.last_visit_spend = last_visit_spend;
       churnData.date = now;
       churnData.visit_time_preference = visit_time_preference;
       if (age) churnData.age = age;
       if (gender) churnData.gender = gender;
       if (city) churnData.city = city;
+      churnData.is_new_customer = false; // no longer new once they have repeat visits
       await churnData.save();
     } else {
-      // Create a new churn record with ALL fields the ML model needs
+      // ── Brand-new customer → create record tagged as new ──
       churnData = new Churn({
         name: customerName,
         phone,
@@ -287,6 +310,8 @@ app.post('/api/confirm-booking', async (req, res) => {
         visit_time_preference: visit_time_preference,
         preferred_service: service,
         churn_risk_category: 'Medium',
+        is_new_customer: true,   // ← flag: only 1 visit, no history to predict from
+        date: now,
       });
       await churnData.save();
     }
@@ -461,8 +486,18 @@ app.post('/api/churn/predict', authMiddleware, async (req, res) => {
     }
 
     if (!churnData) {
-        console.log(`Data still not found for: ${name}`);
-        return res.json({ error: `Data Not Found: No metrics available for '${name}' in the database.` });
+        console.log(`No churn record found for: ${name}`);
+        return res.status(200).json({ no_data: true, message: `No historical data available for '${name}'.` });
+    }
+
+    // ── New customer or only 1 visit: not enough history to predict churn ──
+    if (churnData.is_new_customer === true || (churnData.total_visits || 0) <= 1) {
+        const visits = churnData.total_visits || 0;
+        console.log(`Insufficient data for: ${name} (${visits} visit(s)) — skipping prediction.`);
+        return res.status(200).json({
+            no_data: true,
+            message: `'${name}' has only ${visits} visit(s). Churn prediction requires at least 2 visits.`
+        });
     }
 
     console.log(`Found data for ${name}. Metrics: visits=${churnData.total_visits}, spend=${churnData.avg_spend_per_visit}`);
@@ -761,3 +796,5 @@ app.get('/api/mongo-analytics', authMiddleware, async (req, res) => {
 
 const PORT = process.env.PORT || 5000;
 httpServer.listen(PORT, () => console.log('Server running on port ' + PORT));
+
+

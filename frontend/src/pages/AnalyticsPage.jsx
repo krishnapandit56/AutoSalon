@@ -74,7 +74,19 @@ export default function AnalyticsPage() {
 
   const revenueData = data[REV_FILTERS[revFilter]] || [];
   const visitsData = visMonth === 'All' ? data.visitsByMonth : data.visitsByMonth.filter(v => v.month === visMonth);
-  const revFilterTotal = revenueData.reduce((s, d) => s + (d.revenue || 0), 0);
+
+  // Show revenue for the CURRENT period only (not total of all historical bars)
+  const getRevFilterValue = () => {
+    const real = revenueData.filter(d => !d.isPredicted);
+    if (revFilter === 'Month') {
+      const mNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+      const curMonth = mNames[new Date().getMonth()];
+      return real.find(d => d.month === curMonth)?.revenue ?? real[real.length - 1]?.revenue ?? 0;
+    }
+    // Day = last real bar = today; Week = last real bar = current week
+    return real[real.length - 1]?.revenue ?? 0;
+  };
+  const revFilterValue = getRevFilterValue();
 
   const FilterPills = ({ options, active, onChange }) => (
     <div className="flex gap-1.5 flex-wrap">
@@ -119,9 +131,13 @@ export default function AnalyticsPage() {
             </div>
             <FilterPills options={Object.keys(REV_FILTERS)} active={revFilter} onChange={setRevFilter} />
           </div>
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-ink-400 mb-1">Revenue ({revFilter})</p>
-          <p className="text-2xl font-display font-bold text-ink-900">{fmtINR(revFilterTotal)}</p>
-          <p className="text-xs text-ink-400 mt-1 font-medium">From MongoDB records</p>
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-ink-400 mb-1">
+            Revenue ({revFilter === 'Day' ? 'Today' : revFilter === 'Week' ? 'This Week' : 'This Month'})
+          </p>
+          <p className="text-2xl font-display font-bold text-ink-900">{fmtINR(revFilterValue)}</p>
+          <p className="text-xs text-ink-400 mt-1 font-medium">
+            {revFilter === 'Day' ? "Today's earnings" : revFilter === 'Week' ? "Current week" : "Current month"}
+          </p>
         </GlassCard>
         <KpiCard icon={Users} label="Total Bookings" numericValue={data.totalBookings} sub="Lifetime salon records" accent="cyan" />
         <KpiCard icon={Star} label="Top Service" value={data.servicePerformance[0]?.name || '—'} sub={`${data.servicePerformance[0]?.bookings || 0} bookings`} accent="gold" />
@@ -154,66 +170,47 @@ export default function AnalyticsPage() {
         </div>
       </GlassCard>
 
-      {/* Demand Forecast Section */}
+      {/* Demand Forecast Section — Insights only (doughnut removed) */}
       <div className="flex items-center gap-4">
         <div className="h-px flex-1 bg-ink-100" />
         <Badge variant="purple"><Zap className="w-3 h-3" /> Demand Forecasting</Badge>
         <div className="h-px flex-1 bg-ink-100" />
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
-        <GlassCard padding="p-6">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">Demand Distribution</h3>
-          <div className="h-52">
-            <ResponsiveContainer width="100%" height="100%">
-              <PieChart>
-                <Pie data={Object.entries(data.demandForecast?.distribution || {}).map(([risk, count]) => ({ risk, count }))}
-                  dataKey="count" nameKey="risk" cx="50%" cy="50%" outerRadius={72} innerRadius={38} paddingAngle={4}>
-                  {Object.entries(data.demandForecast?.distribution || {}).map(([risk], i) => (
-                    <Cell key={i} fill={risk === 'High' ? '#ef4444' : risk === 'Medium' ? '#f59e0b' : '#10b981'} />
-                  ))}
-                </Pie>
-                <Tooltip {...ttStyle} />
-              </PieChart>
-            </ResponsiveContainer>
-          </div>
-        </GlassCard>
-
-        <GlassCard padding="p-6" className="lg:col-span-2">
-          <h3 className="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">Forecasting Insights</h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div className="p-4 rounded-xl bg-aurora-purple/5 border border-aurora-purple/10">
-              <p className="text-[10px] font-bold text-aurora-purple uppercase tracking-widest mb-2">Trend Signal</p>
-              <p className="text-sm font-semibold text-ink-800 leading-relaxed">
-                Expected <span className="gradient-text font-bold">{data.demandForecast?.dominant_demand} demand</span> for {data.servicePerformance[0]?.name} services.
-              </p>
-            </div>
-            <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
-              <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-2">High Demand %</p>
-              <div className="flex justify-between text-xs font-bold text-emerald-800 mb-2">
-                <span>Predicted</span>
-                <span>{data.demandForecast?.summary['High%']}%</span>
-              </div>
-              <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${data.demandForecast?.summary['High%']}%` }}
-                  transition={{ duration: 1.2, ease: 'easeOut' }}
-                  className="h-full bg-emerald-500 rounded-full"
-                />
-              </div>
-            </div>
-          </div>
-          <div className="flex items-center gap-3 p-4 rounded-xl bg-surface-2 border border-ink-100/40">
-            <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shrink-0 shadow-sm text-base">💡</div>
-            <p className="text-xs text-ink-500 font-medium leading-relaxed">
-              {data.demandForecast?.dominant_demand === 'High'
-                ? 'Prepare inventory for surge in facial and hair color services.'
-                : 'Launch loyalty campaigns to boost low demand segments.'}
+      <GlassCard padding="p-6">
+        <h3 className="text-xs font-bold uppercase tracking-widest text-ink-400 mb-4">Forecasting Insights</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          <div className="p-4 rounded-xl bg-aurora-purple/5 border border-aurora-purple/10">
+            <p className="text-[10px] font-bold text-aurora-purple uppercase tracking-widest mb-2">Trend Signal</p>
+            <p className="text-sm font-semibold text-ink-800 leading-relaxed">
+              Expected <span className="gradient-text font-bold">{data.demandForecast?.dominant_demand} demand</span> for {data.servicePerformance[0]?.name} services.
             </p>
           </div>
-        </GlassCard>
-      </div>
+          <div className="p-4 rounded-xl bg-emerald-50 border border-emerald-100">
+            <p className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest mb-2">High Demand %</p>
+            <div className="flex justify-between text-xs font-bold text-emerald-800 mb-2">
+              <span>Predicted</span>
+              <span>{data.demandForecast?.summary['High%']}%</span>
+            </div>
+            <div className="w-full h-2 bg-emerald-100 rounded-full overflow-hidden">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${data.demandForecast?.summary['High%']}%` }}
+                transition={{ duration: 1.2, ease: 'easeOut' }}
+                className="h-full bg-emerald-500 rounded-full"
+              />
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center gap-3 p-4 rounded-xl bg-surface-2 border border-ink-100/40">
+          <div className="w-8 h-8 rounded-lg bg-white flex items-center justify-center shrink-0 shadow-sm text-base">💡</div>
+          <p className="text-xs text-ink-500 font-medium leading-relaxed">
+            {data.demandForecast?.dominant_demand === 'High'
+              ? 'Prepare inventory for surge in facial and hair color services.'
+              : 'Launch loyalty campaigns to boost low demand segments.'}
+          </p>
+        </div>
+      </GlassCard>
 
       {/* Visits + Peak Days */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -271,7 +268,7 @@ export default function AnalyticsPage() {
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" horizontal={false} />
               <XAxis type="number" tick={{ fontSize: 10, fill: '#94a3b8' }} axisLine={false} tickLine={false} />
               <YAxis dataKey="name" type="category" tick={{ fontSize: 11, fill: '#334155', fontWeight: 600 }} axisLine={false} tickLine={false} width={72} />
-              <Tooltip formatter={(v, n) => [n === 'bookings' ? v : fmtINR(v), n]} {...ttStyle} />
+              <Tooltip formatter={(v, n) => [n.toLowerCase() === 'bookings' ? `${v} bookings` : fmtINR(v), n]} {...ttStyle} />
               <Legend iconType="circle" iconSize={8} wrapperStyle={{ fontSize: 11 }} />
               <Bar dataKey="bookings" name="Bookings" fill="#8B5CF6" radius={[0, 6, 6, 0]} maxBarSize={18} />
               <Bar dataKey="revenue" name="Revenue" fill="#10b981" radius={[0, 6, 6, 0]} maxBarSize={18} />

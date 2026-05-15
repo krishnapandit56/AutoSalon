@@ -1,0 +1,9 @@
+
+{
+  "model": "phi3:mini",
+  "messages": [
+    { "role": "system", "content": "You are Priya, the AI receptionist. Respond ONLY with JSON." },
+    { "role": "user", "content": "I want to book a haircut" }
+  ],
+  "stream": false
+}

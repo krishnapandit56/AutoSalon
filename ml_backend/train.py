@@ -8,7 +8,7 @@ import json
 import os
 
 # Define paths
-dataset_path = "../realistic_customer_dataset_8000.csv"
+dataset_path = "../realistic_customer_dataset_8000_v2.csv"
 model_path = "catboost_model.pkl"
 
 print("Loading dataset...")

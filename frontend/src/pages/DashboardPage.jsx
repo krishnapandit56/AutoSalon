@@ -42,6 +42,8 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [revFilter, setRevFilter] = useState('Day');
   const [kpiPeriod, setKpiPeriod] = useState('All Time');
+  const [ngrokUrl, setNgrokUrl] = useState(localStorage.getItem('ngrokUrl') || '');
+  const [isCalling, setIsCalling] = useState(false);
 
   useEffect(() => {
     if (!token) return;
@@ -105,6 +107,39 @@ export default function DashboardPage() {
     return { text: '+15% overall', up: true };
   };
 
+  const handleTestAICall = async () => {
+    const url = prompt("Please enter your ngrok URL (e.g., https://a1b2-c3d4.ngrok-free.app):", ngrokUrl);
+    if (!url) return;
+
+    setNgrokUrl(url);
+    localStorage.setItem('ngrokUrl', url);
+    setIsCalling(true);
+
+    try {
+      const res = await fetch('http://localhost:5000/api/voice/test-call', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          phone: '+919373996788',
+          ngrokUrl: url
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        alert("📞 Calling your number +91 9373996788 now. Please pick up!");
+      } else {
+        alert("Call failed: " + (data.error || "Unknown error"));
+      }
+    } catch (err) {
+      alert("Error: " + err.message);
+    } finally {
+      setIsCalling(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-[1400px] mx-auto">
       {/* Welcome + Period Filter */}
@@ -131,6 +166,16 @@ export default function DashboardPage() {
               </button>
             ))}
           </div>
+          <button
+            onClick={handleTestAICall}
+            disabled={isCalling}
+            className={`px-4 py-1.5 rounded-lg text-[11px] font-bold uppercase tracking-wide transition-all border flex items-center gap-2 ${isCalling
+              ? 'bg-aurora-gold/10 text-aurora-gold border-aurora-gold/20 animate-pulse'
+              : 'bg-emerald-50 text-emerald-600 border-emerald-100 hover:bg-emerald-100 shadow-sm'
+              }`}
+          >
+            {isCalling ? <Zap className="w-3 h-3" /> : '🤖'} {isCalling ? 'Calling...' : 'Test AI Call'}
+          </button>
           <Badge variant="purple" dot><Activity className="w-3 h-3" /> Live</Badge>
         </div>
       </motion.div>

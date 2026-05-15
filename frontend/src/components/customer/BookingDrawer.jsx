@@ -38,7 +38,7 @@ export default function BookingDrawer({
   bookAppointment, isLoading,
 }) {
   const isReady = name && phone && phone.length === 10 && selectedService && selectedLevel && selectedSlot;
-  const cost    = selectedService && selectedLevel ? `₹${SERVICES[selectedService][selectedLevel]}` : null;
+  const cost    = selectedService && selectedLevel ? `₹${SERVICES[selectedService]?.[selectedLevel] || '—'}` : null;
 
   // Phone validation
   const phoneError = phone && !/^\d{10}$/.test(phone);
@@ -51,34 +51,7 @@ export default function BookingDrawer({
   return (
     <div className="space-y-4">
 
-      {/* Summary Card */}
-      <div className="card p-6">
-        <div className="flex items-center gap-3 mb-5">
-          <Calendar className="w-4 h-4 text-accent-500" />
-          <h3 className="text-xs font-bold uppercase tracking-widest text-ink-500">Reservation Summary</h3>
-        </div>
-
-        <SummaryRow label="Service"  value={selectedService?.replace('_', ' ')} />
-        <SummaryRow label="Tier"     value={selectedLevel} />
-        <SummaryRow label="Time"     value={selectedSlot?.time} mono />
-
-        {/* Cost Display */}
-        <div className="mt-5 pt-4 border-t border-ink-100 flex items-end justify-between">
-          <div>
-            <p className="text-xs text-ink-400 font-medium uppercase tracking-wider mb-1">Est. Total</p>
-            <p className="text-3xl font-display font-semibold tracking-tight text-ink-900">
-              {cost ?? <span className="text-ink-300 font-light">—</span>}
-            </p>
-          </div>
-          {cost && (
-            <span className="badge bg-accent-50 text-accent-600 border border-accent-100">
-              INR
-            </span>
-          )}
-        </div>
-      </div>
-
-      {/* Guest Details Card – appears when slot is selected */}
+      {/* ── GUEST DETAILS CARD (shown first, when slot is selected) ── */}
       <AnimatePresence>
         {selectedSlot && (
           <motion.div
@@ -108,7 +81,7 @@ export default function BookingDrawer({
                 )}
               </div>
 
-              {/* Phone — Strict 10-digit validation */}
+              {/* Phone */}
               <div>
                 <div className="relative">
                   <Phone className="absolute left-3.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-ink-400" />
@@ -119,7 +92,6 @@ export default function BookingDrawer({
                     value={phone}
                     maxLength={10}
                     onChange={e => {
-                      // Only allow digits, max 10
                       const val = e.target.value.replace(/\D/g, '').slice(0, 10);
                       setPhone(val);
                     }}
@@ -142,7 +114,6 @@ export default function BookingDrawer({
 
               {/* Age + Gender */}
               <div className="grid grid-cols-5 gap-3">
-                {/* Age — col-span-2 */}
                 <div className="col-span-2">
                   <input
                     type="number"
@@ -157,8 +128,6 @@ export default function BookingDrawer({
                     <p className="text-[10px] text-rose-500 font-medium mt-1">5–120</p>
                   )}
                 </div>
-
-                {/* Gender — Visual selector, col-span-3 */}
                 <div className="col-span-3 flex gap-1.5">
                   {GENDERS.map(g => (
                     <button
@@ -188,6 +157,33 @@ export default function BookingDrawer({
           </motion.div>
         )}
       </AnimatePresence>
+
+      {/* ── RESERVATION SUMMARY CARD (shown second) ── */}
+      <div className="card p-6">
+        <div className="flex items-center gap-3 mb-5">
+          <Calendar className="w-4 h-4 text-accent-500" />
+          <h3 className="text-xs font-bold uppercase tracking-widest text-ink-500">Reservation Summary</h3>
+        </div>
+
+        <SummaryRow label="Service"  value={selectedService?.replace('_', ' ')} />
+        <SummaryRow label="Tier"     value={selectedLevel} />
+        <SummaryRow label="Time"     value={selectedSlot?.time} mono />
+
+        {/* Cost Display */}
+        <div className="mt-5 pt-4 border-t border-ink-100 flex items-end justify-between">
+          <div>
+            <p className="text-xs text-ink-400 font-medium uppercase tracking-wider mb-1">Est. Total</p>
+            <p className="text-3xl font-display font-semibold tracking-tight text-ink-900">
+              {cost ?? <span className="text-ink-300 font-light">—</span>}
+            </p>
+          </div>
+          {cost && (
+            <span className="badge bg-accent-50 text-accent-600 border border-accent-100">
+              INR
+            </span>
+          )}
+        </div>
+      </div>
 
       {/* Validation Summary */}
       {selectedSlot && (phoneError || ageError || nameError) && (

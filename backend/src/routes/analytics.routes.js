@@ -7,6 +7,7 @@ const router = express.Router();
 router.use(authMiddleware);
 
 router.get('/churn', getChurnData);
+router.get('/churn-data', getChurnData);        // alias for backwards compatibility
 router.post('/churn/predict', predictChurn);
 router.get('/advanced-analytics', getAdvancedAnalytics);
 router.get('/mongo-analytics', getMongoAnalytics);
